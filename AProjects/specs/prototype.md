@@ -20,7 +20,7 @@ with a single offline canvas.
 | # | Criterion |
 |---|---|
 | 1 | `pip install -e ".[dev]"` and `pytest` pass on Document / Ops |
-| 2 | `python -m apeSketch` starts a Session on the LAN (default port **8766**) |
+| 2 | `python -m apeSketch` starts a Session on the LAN (default port **9966**) |
 | 3 | PC browser client draws freehand; strokes persist in Python Document |
 | 4 | Second client (phone browser on same Wi‑Fi, or second PC tab) joins via QR / short code and strokes appear on the PC session live |
 | 5 | Save / load `.apesketch.json` |
@@ -94,7 +94,7 @@ prototype (document a `units` field; mm conversion is later).
 | Piece | Notes |
 |---|---|
 | `SketchSession` | Owns one `Document`; applies Ops; keeps revision counter |
-| Host | Bind `0.0.0.0:8766` (not only localhost) so phones can join |
+| Host | Bind `0.0.0.0:9966` (not only localhost) so phones can join |
 | HTTP | Serve static clients; `GET /api/snapshot`; `GET /api/pair` → `{url, code, ws}` |
 | WebSocket | `/ws?room=<code>&token=<tok>` — clients send Ops, receive Ops + snapshots |
 | Pairing | Room code + token generated at Session start; QR encodes WS URL |
@@ -236,7 +236,7 @@ convenient.
 | App | Default |
 |---|---|
 | apeCAD scratchpad | `127.0.0.1:8765` |
-| apeSketch Session | `0.0.0.0:8766` |
+| apeSketch Session | `0.0.0.0:9966` (WS `9967`) |
 
 ## Risk register
 

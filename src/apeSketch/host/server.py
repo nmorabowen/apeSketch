@@ -23,7 +23,8 @@ from apeSketch.session import SketchSession
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DEFAULT_HOST = "0.0.0.0"
-DEFAULT_PORT = 8766
+# Keep clear of apeCAD scratchpad (8765).
+DEFAULT_PORT = 9966
 
 
 def _lan_ip() -> str:
