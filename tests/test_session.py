@@ -24,7 +24,7 @@ def test_session_broadcasts_ops() -> None:
 
 def test_pair_and_authorize() -> None:
     session = SketchSession()
-    info = session.pair_info(host="192.168.1.10", port=8767)
+    info = session.pair_info(host="192.168.1.10", port=9967)
     assert info["room"] == session.room_code
     assert "token=" in info["ws"]
     session.authorize(info["room"], session.token)

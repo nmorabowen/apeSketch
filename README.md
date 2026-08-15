@@ -29,9 +29,9 @@ pytest
 python -m apeSketch
 ```
 
-Opens a board on port **8766** (HTTP) with WebSocket on **8767**.
-Pair page: `/pair`. Phone on the same Wi‑Fi can open the advertised
-board URL.
+Opens a board on port **9966** (HTTP) with WebSocket on **9967**
+(apeCAD uses 8765 — these stay separate). Pair page: `/pair`. Phone on
+the same Wi‑Fi can open the advertised board URL.
 
 HTTP-only (no `websockets`):
 
