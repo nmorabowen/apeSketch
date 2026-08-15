@@ -27,3 +27,6 @@ Thumbs.db
 *.apesketch.json
 /out/
 /bundle/
+.apeSketch/
+node_modules/
+package-lock.json

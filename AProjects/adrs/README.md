@@ -14,7 +14,7 @@ Status: `Proposed` → `Accepted` → `Amended` / `Superseded`.
 | [0002](0002-ink-bridge-scratchpad.md) | apeSketch is an ink bridge, not a whiteboard product | Accepted |
 | [0003](0003-python-document-clients.md) | Python Document is the language; Android and desktop are clients | Accepted |
 | [0004](0004-lan-session-host.md) | Workstation hosts the session over LAN WebSocket; Wi-Fi Direct deferred | Accepted |
-| [0005](0005-own-core-adopt-patterns.md) | Own Document + Op protocol; adopt patterns and small MIT deps | Accepted |
+| [0006](0006-viewport-client-camera.md) | Viewport pan/zoom is client camera, not Document state | Accepted |
 
 ## Template
 

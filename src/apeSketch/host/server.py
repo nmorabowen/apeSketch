@@ -17,14 +17,19 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from apeSketch.assets import AssetStore
 from apeSketch.document import Document
 from apeSketch.errors import DocumentError
+from apeSketch.host.perf_store import append_sample, summarize
+from apeSketch.host.qr_svg import board_qr_svg
 from apeSketch.session import SketchSession
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HOST = "0.0.0.0"
 # Keep clear of apeCAD scratchpad (8765).
 DEFAULT_PORT = 9966
+ASSET_DIR = REPO_ROOT / ".apeSketch" / "assets"
 
 
 def _lan_ip() -> str:
@@ -66,13 +71,25 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if path in ("/", "/index.html", "/board.html"):
-            self._send_file(STATIC_DIR / "board.html", "text/html; charset=utf-8")
+            self._send_file(
+                STATIC_DIR / "board.html",
+                "text/html; charset=utf-8",
+                no_store=True,
+            )
             return
         if path == "/board.js":
-            self._send_file(STATIC_DIR / "board.js", "text/javascript; charset=utf-8")
+            self._send_file(
+                STATIC_DIR / "board.js",
+                "text/javascript; charset=utf-8",
+                no_store=True,
+            )
             return
         if path == "/pair":
-            self._send_file(STATIC_DIR / "pair.html", "text/html; charset=utf-8")
+            self._send_file(
+                STATIC_DIR / "pair.html",
+                "text/html; charset=utf-8",
+                no_store=True,
+            )
             return
         if path == "/api/snapshot":
             self._send_json(200, self.server.session.snapshot_message())
@@ -90,10 +107,112 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             info["ws_port"] = self.server.ws_port
             self._send_json(200, info)
             return
+        if path == "/api/perf/summary":
+            self._send_json(200, summarize(root=REPO_ROOT))
+            return
+        if path.startswith("/api/asset/"):
+            asset_id = path[len("/api/asset/") :].strip("/")
+            if not asset_id or "/" in asset_id:
+                self._send_json(404, {"error": "missing asset id"})
+                return
+            item = self.server.session.assets.get(asset_id)
+            if item is None:
+                self._send_json(404, {"error": "unknown asset"})
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", item.mime)
+            self.send_header("Content-Length", str(len(item.data)))
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self._cors()
+            self.end_headers()
+            self.wfile.write(item.data)
+            return
+        if path == "/api/export/svg":
+            page = self.server.session.document.page()
+            svg = Document._page_to_svg(page, assets=self.server.session.assets)
+            raw = svg.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header(
+                "Content-Disposition",
+                f'attachment; filename="apesketch-{self.server.session.document.revision}.svg"',
+            )
+            self.send_header("Cache-Control", "no-store")
+            self._cors()
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        if path == "/api/export/json":
+            payload = self.server.session.document.to_dict()
+            raw = json.dumps(payload, indent=2).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header(
+                "Content-Disposition",
+                f'attachment; filename="apesketch-{self.server.session.document.revision}.json"',
+            )
+            self.send_header("Cache-Control", "no-store")
+            self._cors()
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+        if path == "/api/pair/qr.svg":
+            info = self.server.session.pair_info(
+                host=self.server.advertise_host,
+                port=self.server.ws_port,
+            )
+            board = f"http://{self.server.advertise_host}:{self.server.server_address[1]}/"
+            try:
+                svg = board_qr_svg(board)
+            except DocumentError as exc:
+                self._send_json(503, {"error": str(exc)})
+                return
+            raw = svg.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(raw)
+            return
         self._send_json(404, {"error": f"unknown path {path}"})
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path == "/api/perf":
+            try:
+                payload = self._read_json_object()
+                meta = append_sample(payload, root=REPO_ROOT)
+                self._send_json(200, meta)
+            except DocumentError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+        if parsed.path in ("/api/asset", "/api/asset/"):
+            try:
+                payload = self._read_json_object()
+                mime = payload.get("mime", "image/png")
+                data_b64 = payload.get("data_base64")
+                if not isinstance(mime, str) or not isinstance(data_b64, str):
+                    raise DocumentError("mime and data_base64 required")
+                item = self.server.session.assets.put_base64(data_b64, mime)
+                self._send_json(
+                    200,
+                    {
+                        "asset_id": item.asset_id,
+                        "mime": item.mime,
+                        "bytes": len(item.data),
+                        "url": f"/api/asset/{item.asset_id}",
+                    },
+                )
+            except DocumentError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
         if parsed.path != "/api/op":
             self._send_json(404, {"error": f"unknown path {parsed.path}"})
             return
@@ -117,7 +236,7 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
-    def _send_file(self, path: Path, content_type: str) -> None:
+    def _send_file(self, path: Path, content_type: str, *, no_store: bool = False) -> None:
         if not path.is_file():
             self._send_json(404, {"error": f"missing {path.name}"})
             return
@@ -125,6 +244,9 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
+        if no_store:
+            self.send_header("Cache-Control", "no-store, max-age=0")
+            self.send_header("Pragma", "no-cache")
         self.end_headers()
         self.wfile.write(data)
 
@@ -195,6 +317,29 @@ async def _ws_handler(websocket: Any, session: SketchSession) -> None:
                     except DocumentError as exc:
                         await websocket.send(json.dumps({"type": "error", "message": str(exc)}))
                     continue
+                if msg_type == "ops":
+                    ops_payload = parsed_msg.get("ops")
+                    if not isinstance(ops_payload, list) or not ops_payload:
+                        await websocket.send(
+                            json.dumps({"type": "error", "message": "ops array required"})
+                        )
+                        continue
+                    batch: list[dict[str, Any]] = []
+                    for item in ops_payload:
+                        if not isinstance(item, dict):
+                            await websocket.send(
+                                json.dumps({"type": "error", "message": "ops entries must be objects"})
+                            )
+                            batch = []
+                            break
+                        batch.append({str(k): v for k, v in item.items()})
+                    if not batch:
+                        continue
+                    try:
+                        session.apply_many_dicts(batch, exclude=on_message)
+                    except DocumentError as exc:
+                        await websocket.send(json.dumps({"type": "error", "message": str(exc)}))
+                    continue
                 if "op" in parsed_msg:
                     try:
                         session.apply_dict(
@@ -237,7 +382,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    session = SketchSession(Document())
+    session = SketchSession(Document(), assets=AssetStore(ASSET_DIR))
     http_port = args.port
     ws_port = args.ws_port if args.ws_port is not None else http_port + 1
     advertise = _lan_ip()

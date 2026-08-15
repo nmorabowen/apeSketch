@@ -9,7 +9,15 @@ import pytest
 
 from apeSketch.document import Document
 from apeSketch.errors import DocumentError
-from apeSketch.ops import AppendPoints, BeginStroke, ClearPage, EndStroke, EraseStroke, SCHEMA_ID
+from apeSketch.ops import (
+    AppendPoints,
+    BeginStroke,
+    ClearPage,
+    EndStroke,
+    EraseStroke,
+    SCHEMA_ID,
+    SetBackground,
+)
 from apeSketch.types import InkPoint, StrokeStyle
 
 
@@ -73,6 +81,41 @@ def test_erase_and_clear() -> None:
     assert doc.strokes() == []
 
 
+def test_ink_kinds_and_background() -> None:
+    doc = Document()
+    assert doc.page().background == "#fafaf7"
+    doc.apply(SetBackground(color="#1c211c"))
+    assert doc.page().background == "#1c211c"
+
+    doc.apply(
+        BeginStroke(
+            stroke_id="chalk1",
+            author="test",
+            style=StrokeStyle(color="#ffffff", width=4, kind="chalk"),
+        )
+    )
+    doc.apply(
+        AppendPoints(
+            stroke_id="chalk1",
+            points=(InkPoint(0, 0, 0.0, 0.5), InkPoint(5, 5, 10.0, 0.8)),
+        )
+    )
+    doc.apply(EndStroke(stroke_id="chalk1"))
+    stroke = doc.strokes()[0]
+    assert stroke.style.kind == "chalk"
+    assert stroke.style.color == "#ffffff"
+
+    svg = Document._page_to_svg(doc.page())
+    assert 'fill="#1c211c"' in svg
+    assert 'data-kind="chalk"' in svg
+    assert 'data-tip="round"' in svg
+
+    payload = doc.to_dict()
+    restored = Document.from_dict(payload)
+    assert restored.page().background == "#1c211c"
+    assert restored.strokes()[0].style.kind == "chalk"
+
+
 def test_append_unknown_stroke_fails() -> None:
     doc = Document()
     with pytest.raises(DocumentError):
@@ -82,6 +125,30 @@ def test_append_unknown_stroke_fails() -> None:
                 points=(InkPoint(0, 0, 0.0),),
             )
         )
+
+
+def test_add_and_replace_stroke_points() -> None:
+    doc = Document()
+    doc.apply_dict(
+        {
+            "op": "add_stroke",
+            "stroke_id": "full",
+            "author": "t",
+            "points": [[0, 0, 0, 0.5], [10, 0, 1, 0.5], [20, 0, 2, 0.5], [30, 0, 3, 0.5]],
+            "style": {"color": "#000000", "width": 2},
+        }
+    )
+    assert len(doc.strokes()) == 1
+    doc.apply_dict(
+        {
+            "op": "replace_stroke_points",
+            "stroke_id": "full",
+            "points": [[0, 0, 0, 0.5], [10, 0, 1, 0.5]],
+        }
+    )
+    assert len(doc.strokes()[0].points) == 2
+    doc.apply_dict({"op": "replace_stroke_points", "stroke_id": "full", "points": []})
+    assert doc.strokes() == []
 
 
 def test_apply_dict_and_agent_bundle(tmp_path: Path) -> None:
