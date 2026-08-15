@@ -191,6 +191,140 @@ class SetImageLock:
         object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
 
 
+@dataclass(frozen=True, slots=True)
+class AddText:
+    text_id: str
+    content: str
+    x: float
+    y: float
+    width: float
+    height: float
+    font_size: float = 28.0
+    color: str = "#111111"
+    bold: bool = False
+    italic: bool = False
+    author: str = ""
+    layer: str = "text"
+    page_id: str = "p0"
+    blocks: tuple[dict[str, Any], ...] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text_id", _require_id("text_id", self.text_id))
+        object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
+        object.__setattr__(self, "layer", self.layer.strip() or "text")
+        if not isinstance(self.content, str):
+            raise DocumentError("content must be a string")
+        if self.width <= 0 or self.height <= 0 or self.font_size <= 0:
+            raise DocumentError("text width/height/font_size must be positive")
+        color = self.color.strip()
+        if color == "":
+            raise DocumentError("color must be non-empty")
+        object.__setattr__(self, "color", color)
+        if not isinstance(self.bold, bool) or not isinstance(self.italic, bool):
+            raise DocumentError("bold/italic must be bools")
+        if self.blocks is not None:
+            # Validate via types.parse_blocks
+            from apeSketch.types import parse_blocks
+
+            try:
+                parse_blocks(list(self.blocks), content=self.content)
+            except ValueError as exc:
+                raise DocumentError(str(exc)) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class SetTextContent:
+    text_id: str
+    content: str
+    page_id: str = "p0"
+    blocks: tuple[dict[str, Any], ...] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text_id", _require_id("text_id", self.text_id))
+        object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
+        if not isinstance(self.content, str):
+            raise DocumentError("content must be a string")
+        if self.blocks is not None:
+            from apeSketch.types import parse_blocks
+
+            try:
+                parse_blocks(list(self.blocks), content=self.content)
+            except ValueError as exc:
+                raise DocumentError(str(exc)) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class SetTextStyle:
+    text_id: str
+    font_size: float | None = None
+    color: str | None = None
+    bold: bool | None = None
+    italic: bool | None = None
+    page_id: str = "p0"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text_id", _require_id("text_id", self.text_id))
+        object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
+        if (
+            self.font_size is None
+            and self.color is None
+            and self.bold is None
+            and self.italic is None
+        ):
+            raise DocumentError("set_text_style needs at least one style field")
+        if self.font_size is not None and self.font_size <= 0:
+            raise DocumentError("font_size must be positive")
+        if self.color is not None:
+            color = self.color.strip()
+            if color == "":
+                raise DocumentError("color must be non-empty")
+            object.__setattr__(self, "color", color)
+        if self.bold is not None and not isinstance(self.bold, bool):
+            raise DocumentError("bold must be a bool")
+        if self.italic is not None and not isinstance(self.italic, bool):
+            raise DocumentError("italic must be a bool")
+
+
+@dataclass(frozen=True, slots=True)
+class TransformText:
+    text_id: str
+    x: float
+    y: float
+    width: float
+    height: float
+    font_size: float | None = None
+    page_id: str = "p0"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text_id", _require_id("text_id", self.text_id))
+        object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
+        if self.width <= 0 or self.height <= 0:
+            raise DocumentError("text width/height must be positive")
+        if self.font_size is not None and self.font_size <= 0:
+            raise DocumentError("font_size must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class EraseText:
+    text_id: str
+    page_id: str = "p0"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text_id", _require_id("text_id", self.text_id))
+        object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
+
+
+@dataclass(frozen=True, slots=True)
+class SetTextLock:
+    text_id: str
+    locked: bool
+    page_id: str = "p0"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "text_id", _require_id("text_id", self.text_id))
+        object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
+
+
 Op = (
     BeginStroke
     | AppendPoints
@@ -204,6 +338,12 @@ Op = (
     | EraseImage
     | TransformImage
     | SetImageLock
+    | AddText
+    | SetTextContent
+    | SetTextStyle
+    | TransformText
+    | EraseText
+    | SetTextLock
 )
 
 
@@ -285,7 +425,88 @@ def op_to_dict(op: Op) -> dict[str, Any]:
             "locked": op.locked,
             "page_id": op.page_id,
         }
+    if isinstance(op, AddText):
+        payload = {
+            "op": "add_text",
+            "text_id": op.text_id,
+            "content": op.content,
+            "x": op.x,
+            "y": op.y,
+            "width": op.width,
+            "height": op.height,
+            "font_size": op.font_size,
+            "color": op.color,
+            "bold": op.bold,
+            "italic": op.italic,
+            "author": op.author,
+            "layer": op.layer,
+            "page_id": op.page_id,
+        }
+        if op.blocks is not None:
+            payload["blocks"] = list(op.blocks)
+        return payload
+    if isinstance(op, SetTextContent):
+        payload = {
+            "op": "set_text_content",
+            "text_id": op.text_id,
+            "content": op.content,
+            "page_id": op.page_id,
+        }
+        if op.blocks is not None:
+            payload["blocks"] = list(op.blocks)
+        return payload
+    if isinstance(op, SetTextStyle):
+        payload = {
+            "op": "set_text_style",
+            "text_id": op.text_id,
+            "page_id": op.page_id,
+        }
+        if op.font_size is not None:
+            payload["font_size"] = op.font_size
+        if op.color is not None:
+            payload["color"] = op.color
+        if op.bold is not None:
+            payload["bold"] = op.bold
+        if op.italic is not None:
+            payload["italic"] = op.italic
+        return payload
+    if isinstance(op, TransformText):
+        payload = {
+            "op": "transform_text",
+            "text_id": op.text_id,
+            "x": op.x,
+            "y": op.y,
+            "width": op.width,
+            "height": op.height,
+            "page_id": op.page_id,
+        }
+        if op.font_size is not None:
+            payload["font_size"] = op.font_size
+        return payload
+    if isinstance(op, EraseText):
+        return {"op": "erase_text", "text_id": op.text_id, "page_id": op.page_id}
+    if isinstance(op, SetTextLock):
+        return {
+            "op": "set_text_lock",
+            "text_id": op.text_id,
+            "locked": op.locked,
+            "page_id": op.page_id,
+        }
     raise DocumentError(f"unknown op type {type(op)!r}")
+
+
+def _blocks_tuple(data: dict[str, Any]) -> tuple[dict[str, Any], ...] | None:
+    raw = data.get("blocks")
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise DocumentError("blocks must be a list")
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise DocumentError("each block must be an object")
+        out.append({str(k): v for k, v in item.items()})
+    return tuple(out)
 
 
 def op_from_dict(data: dict[str, Any]) -> Op:
@@ -448,5 +669,128 @@ def op_from_dict(data: dict[str, Any]) -> Op:
         if not isinstance(locked, bool):
             raise DocumentError("locked must be a bool")
         return SetImageLock(image_id=image_id, locked=locked, page_id=page_id)
+
+    if kind == "add_text":
+        text_id = data.get("text_id")
+        content = data.get("content", "")
+        if not isinstance(text_id, str) or not isinstance(content, str):
+            raise DocumentError("text_id/content must be strings")
+        x = data.get("x", 0.0)
+        y = data.get("y", 0.0)
+        width = data.get("width")
+        height = data.get("height")
+        font_size = data.get("font_size", 28.0)
+        color = data.get("color", "#111111")
+        bold = data.get("bold", False)
+        italic = data.get("italic", False)
+        author = data.get("author", "")
+        layer = data.get("layer", "text")
+        if not all(isinstance(v, (int, float)) for v in (x, y, width, height, font_size)):
+            raise DocumentError("text geometry must be numbers")
+        if not isinstance(color, str) or not isinstance(author, str) or not isinstance(layer, str):
+            raise DocumentError("color/author/layer must be strings")
+        if not isinstance(bold, bool) or not isinstance(italic, bool):
+            raise DocumentError("bold/italic must be bools")
+        return AddText(
+            text_id=text_id,
+            content=content,
+            x=float(x),
+            y=float(y),
+            width=float(width),
+            height=float(height),
+            font_size=float(font_size),
+            color=color,
+            bold=bold,
+            italic=italic,
+            author=author,
+            layer=layer,
+            page_id=page_id,
+            blocks=_blocks_tuple(data),
+        )
+
+    if kind == "set_text_content":
+        text_id = data.get("text_id")
+        content = data.get("content")
+        if not isinstance(text_id, str) or not isinstance(content, str):
+            raise DocumentError("text_id/content must be strings")
+        return SetTextContent(
+            text_id=text_id,
+            content=content,
+            page_id=page_id,
+            blocks=_blocks_tuple(data),
+        )
+
+    if kind == "set_text_style":
+        text_id = data.get("text_id")
+        if not isinstance(text_id, str):
+            raise DocumentError("text_id must be a string")
+        font_size = data.get("font_size")
+        color = data.get("color")
+        bold = data.get("bold")
+        italic = data.get("italic")
+        fs: float | None
+        if font_size is None:
+            fs = None
+        elif isinstance(font_size, (int, float)):
+            fs = float(font_size)
+        else:
+            raise DocumentError("font_size must be a number")
+        if color is not None and not isinstance(color, str):
+            raise DocumentError("color must be a string")
+        if bold is not None and not isinstance(bold, bool):
+            raise DocumentError("bold must be a bool")
+        if italic is not None and not isinstance(italic, bool):
+            raise DocumentError("italic must be a bool")
+        return SetTextStyle(
+            text_id=text_id,
+            font_size=fs,
+            color=color,
+            bold=bold,
+            italic=italic,
+            page_id=page_id,
+        )
+
+    if kind == "transform_text":
+        text_id = data.get("text_id")
+        if not isinstance(text_id, str):
+            raise DocumentError("text_id must be a string")
+        x = data.get("x")
+        y = data.get("y")
+        width = data.get("width")
+        height = data.get("height")
+        font_size = data.get("font_size")
+        if not all(isinstance(v, (int, float)) for v in (x, y, width, height)):
+            raise DocumentError("transform_text needs numeric x/y/width/height")
+        fs: float | None
+        if font_size is None:
+            fs = None
+        elif isinstance(font_size, (int, float)):
+            fs = float(font_size)
+        else:
+            raise DocumentError("font_size must be a number")
+        return TransformText(
+            text_id=text_id,
+            x=float(x),
+            y=float(y),
+            width=float(width),
+            height=float(height),
+            font_size=fs,
+            page_id=page_id,
+        )
+
+    if kind == "erase_text":
+        text_id = data.get("text_id")
+        if not isinstance(text_id, str):
+            raise DocumentError("text_id must be a string")
+        return EraseText(text_id=text_id, page_id=page_id)
+
+    if kind == "set_text_lock":
+        text_id = data.get("text_id")
+        locked = data.get("locked")
+        if not isinstance(text_id, str):
+            raise DocumentError("text_id must be a string")
+        if not isinstance(locked, bool):
+            raise DocumentError("locked must be a bool")
+        return SetTextLock(text_id=text_id, locked=locked, page_id=page_id)
 
     raise DocumentError(f"unknown op {kind!r}")

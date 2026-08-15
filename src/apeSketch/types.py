@@ -178,6 +178,214 @@ class ImageObject:
 
 
 @dataclass(slots=True)
+class TextRun:
+    """Styled span inside a text block. Missing fields inherit box defaults."""
+
+    text: str
+    font_size: float | None = None
+    bold: bool | None = None
+    italic: bool | None = None
+    color: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {"text": self.text}
+        if self.font_size is not None:
+            payload["font_size"] = self.font_size
+        if self.bold is not None:
+            payload["bold"] = self.bold
+        if self.italic is not None:
+            payload["italic"] = self.italic
+        if self.color is not None:
+            payload["color"] = self.color
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> TextRun:
+        text = data.get("text", "")
+        if not isinstance(text, str):
+            raise ValueError("run text must be a string")
+        font_size = data.get("font_size")
+        bold = data.get("bold")
+        italic = data.get("italic")
+        color = data.get("color")
+        fs: float | None
+        if font_size is None:
+            fs = None
+        elif isinstance(font_size, (int, float)) and float(font_size) > 0:
+            fs = float(font_size)
+        else:
+            raise ValueError("run font_size must be a positive number")
+        if bold is not None and not isinstance(bold, bool):
+            raise ValueError("run bold must be a bool")
+        if italic is not None and not isinstance(italic, bool):
+            raise ValueError("run italic must be a bool")
+        if color is not None and (not isinstance(color, str) or color == ""):
+            raise ValueError("run color must be a non-empty string")
+        return cls(
+            text=text,
+            font_size=fs,
+            bold=bold if isinstance(bold, bool) else None,
+            italic=italic if isinstance(italic, bool) else None,
+            color=color if isinstance(color, str) else None,
+        )
+
+
+@dataclass(slots=True)
+class TextBlock:
+    """One paragraph or list item inside a text box."""
+
+    kind: str = "p"  # p | ul | ol
+    indent: int = 0
+    runs: list[TextRun] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "kind": self.kind,
+            "indent": self.indent,
+            "runs": [run.to_dict() for run in self.runs],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> TextBlock:
+        kind = data.get("kind", "p")
+        indent = data.get("indent", 0)
+        runs_raw = data.get("runs", [])
+        if not isinstance(kind, str) or kind not in {"p", "ul", "ol"}:
+            raise ValueError("block kind must be p, ul, or ol")
+        if not isinstance(indent, int) or indent < 0 or indent > 6:
+            raise ValueError("block indent must be an int 0..6")
+        if not isinstance(runs_raw, list):
+            raise ValueError("block runs must be a list")
+        runs: list[TextRun] = []
+        for item in runs_raw:
+            if not isinstance(item, dict):
+                raise ValueError("each run must be an object")
+            runs.append(TextRun.from_dict({str(k): v for k, v in item.items()}))
+        if not runs:
+            runs = [TextRun(text="")]
+        return cls(kind=kind, indent=indent, runs=runs)
+
+
+def blocks_from_plain_content(content: str) -> list[TextBlock]:
+    """Legacy plain content → one paragraph block per line."""
+    lines = content.split("\n") if content else [""]
+    return [TextBlock(kind="p", indent=0, runs=[TextRun(text=line)]) for line in lines]
+
+
+def flatten_blocks(blocks: list[TextBlock]) -> str:
+    lines: list[str] = []
+    for block in blocks:
+        lines.append("".join(run.text for run in block.runs))
+    return "\n".join(lines)
+
+
+def parse_blocks(raw: object | None, *, content: str = "") -> list[TextBlock]:
+    if raw is None:
+        return blocks_from_plain_content(content)
+    if not isinstance(raw, list):
+        raise ValueError("blocks must be a list")
+    if not raw:
+        return blocks_from_plain_content(content)
+    blocks: list[TextBlock] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("each block must be an object")
+        blocks.append(TextBlock.from_dict({str(k): v for k, v in item.items()}))
+    return blocks
+
+
+@dataclass(slots=True)
+class TextObject:
+    """Text box on the page: geometry is a window; typography lives in blocks."""
+
+    text_id: str
+    content: str
+    x: float
+    y: float
+    width: float
+    height: float
+    font_size: float = 28.0
+    color: str = "#111111"
+    bold: bool = False
+    italic: bool = False
+    author: str = ""
+    layer: str = "text"
+    locked: bool = False
+    blocks: list[TextBlock] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not self.blocks:
+            self.blocks = blocks_from_plain_content(self.content)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "text_id": self.text_id,
+            "content": self.content,
+            "x": self.x,
+            "y": self.y,
+            "width": self.width,
+            "height": self.height,
+            "font_size": self.font_size,
+            "color": self.color,
+            "bold": self.bold,
+            "italic": self.italic,
+            "author": self.author,
+            "layer": self.layer,
+            "locked": self.locked,
+            "blocks": [block.to_dict() for block in self.blocks],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> TextObject:
+        text_id = data.get("text_id")
+        content = data.get("content", "")
+        if not isinstance(text_id, str) or text_id == "":
+            raise ValueError("text_id must be a non-empty string")
+        if not isinstance(content, str):
+            raise ValueError("content must be a string")
+        x = data.get("x", 0.0)
+        y = data.get("y", 0.0)
+        width = data.get("width", 200.0)
+        height = data.get("height", 40.0)
+        font_size = data.get("font_size", 28.0)
+        color = data.get("color", "#111111")
+        bold = data.get("bold", False)
+        italic = data.get("italic", False)
+        author = data.get("author", "")
+        layer = data.get("layer", "text")
+        locked = data.get("locked", False)
+        if not all(isinstance(v, (int, float)) for v in (x, y, width, height, font_size)):
+            raise ValueError("text geometry must be numbers")
+        if float(width) <= 0 or float(height) <= 0 or float(font_size) <= 0:
+            raise ValueError("text width/height/font_size must be positive")
+        if not isinstance(color, str) or color == "":
+            raise ValueError("color must be a non-empty string")
+        if not isinstance(bold, bool) or not isinstance(italic, bool):
+            raise ValueError("bold/italic must be bools")
+        if not isinstance(author, str) or not isinstance(layer, str):
+            raise ValueError("author/layer must be strings")
+        if not isinstance(locked, bool):
+            raise ValueError("locked must be a bool")
+        blocks = parse_blocks(data.get("blocks"), content=content)
+        return cls(
+            text_id=text_id,
+            content=content if content else flatten_blocks(blocks),
+            x=float(x),
+            y=float(y),
+            width=float(width),
+            height=float(height),
+            font_size=float(font_size),
+            color=color,
+            bold=bold,
+            italic=italic,
+            author=author,
+            layer=layer or "text",
+            locked=locked,
+            blocks=blocks,
+        )
+
+
+@dataclass(slots=True)
 class Page:
     page_id: str
     width: float = 1280.0
@@ -187,6 +395,8 @@ class Page:
     stroke_order: list[str] = field(default_factory=list)
     images: dict[str, ImageObject] = field(default_factory=dict)
     image_order: list[str] = field(default_factory=list)
+    texts: dict[str, TextObject] = field(default_factory=dict)
+    text_order: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -198,6 +408,8 @@ class Page:
             "strokes": {sid: self.strokes[sid].to_dict() for sid in self.stroke_order},
             "image_order": list(self.image_order),
             "images": {iid: self.images[iid].to_dict() for iid in self.image_order},
+            "text_order": list(self.text_order),
+            "texts": {tid: self.texts[tid].to_dict() for tid in self.text_order},
         }
 
     @classmethod
@@ -254,6 +466,29 @@ class Page:
             if iid not in image_order:
                 image_order.append(iid)
 
+        text_order_raw = data.get("text_order", [])
+        texts_raw = data.get("texts", {})
+        if text_order_raw is None:
+            text_order_raw = []
+        if texts_raw is None:
+            texts_raw = {}
+        if not isinstance(text_order_raw, list) or not isinstance(texts_raw, dict):
+            raise ValueError("text_order/texts invalid")
+        texts: dict[str, TextObject] = {}
+        for key, value in texts_raw.items():
+            if not isinstance(key, str) or not isinstance(value, dict):
+                raise ValueError("invalid text entry")
+            texts[key] = TextObject.from_dict({str(k): v for k, v in value.items()})
+        text_order: list[str] = []
+        for item in text_order_raw:
+            if not isinstance(item, str):
+                raise ValueError("text_order entries must be strings")
+            if item in texts:
+                text_order.append(item)
+        for tid in texts:
+            if tid not in text_order:
+                text_order.append(tid)
+
         return cls(
             page_id=page_id,
             width=float(width),
@@ -263,4 +498,6 @@ class Page:
             stroke_order=order,
             images=images,
             image_order=image_order,
+            texts=texts,
+            text_order=text_order,
         )

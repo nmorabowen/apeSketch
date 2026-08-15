@@ -22,6 +22,7 @@ from apeSketch.document import Document
 from apeSketch.errors import DocumentError
 from apeSketch.host.perf_store import append_sample, summarize
 from apeSketch.host.qr_svg import board_qr_svg
+from apeSketch.host.session_store import SessionStore
 from apeSketch.session import SketchSession
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -30,6 +31,8 @@ DEFAULT_HOST = "0.0.0.0"
 # Keep clear of apeCAD scratchpad (8765).
 DEFAULT_PORT = 9966
 ASSET_DIR = REPO_ROOT / ".apeSketch" / "assets"
+SESSIONS_DIR = REPO_ROOT / ".apeSketch" / "sessions"
+AUTOSAVE_DELAY_S = 0.8
 
 
 def _lan_ip() -> str:
@@ -49,11 +52,85 @@ class SessionHttpServer(ThreadingHTTPServer):
         *,
         advertise_host: str,
         ws_port: int,
+        store: SessionStore,
     ) -> None:
         self.session = session
         self.advertise_host = advertise_host
         self.ws_port = ws_port
+        self.store = store
+        self._autosave_timer: threading.Timer | None = None
+        self._autosave_lock = threading.Lock()
         super().__init__(address, SessionHttpHandler)
+        session.on_change(lambda _msg: self.schedule_autosave())
+
+    def session_payload(self) -> dict[str, Any]:
+        return {
+            "active_id": self.session.session_id,
+            "title": self.session.session_title,
+            "revision": self.session.document.revision,
+            "sessions": [meta.to_dict() for meta in self.store.list()],
+        }
+
+    def ensure_bound_session(self) -> dict[str, Any]:
+        """Create a library entry if the live board is not bound yet."""
+        if self.session.session_id is not None:
+            meta = self.store.save(
+                self.session.session_id,
+                self.session.document,
+                title=self.session.session_title,
+            )
+            self.session.bind_session(meta.id, meta.title)
+            return meta.to_dict()
+        meta = self.store.create(
+            self.session.document,
+            title=self.session.session_title,
+        )
+        self.session.bind_session(meta.id, meta.title)
+        return meta.to_dict()
+
+    def schedule_autosave(self) -> None:
+        with self._autosave_lock:
+            if self._autosave_timer is not None:
+                self._autosave_timer.cancel()
+            timer = threading.Timer(AUTOSAVE_DELAY_S, self._autosave_now)
+            timer.daemon = True
+            self._autosave_timer = timer
+            timer.start()
+
+    def _autosave_now(self) -> None:
+        with self._autosave_lock:
+            self._autosave_timer = None
+        try:
+            if self.session.session_id is None:
+                if self.session.document.revision <= 0:
+                    return
+                self.ensure_bound_session()
+                return
+            self.store.save(
+                self.session.session_id,
+                self.session.document,
+                title=self.session.session_title,
+            )
+        except (DocumentError, OSError):
+            return
+
+    def flush_autosave(self) -> None:
+        with self._autosave_lock:
+            if self._autosave_timer is not None:
+                self._autosave_timer.cancel()
+                self._autosave_timer = None
+        try:
+            if self.session.session_id is None:
+                if self.session.document.revision > 0:
+                    self.ensure_bound_session()
+                return
+            self.store.save(
+                self.session.session_id,
+                self.session.document,
+                title=self.session.session_title,
+            )
+        except (DocumentError, OSError):
+            return
 
 
 class SessionHttpHandler(BaseHTTPRequestHandler):
@@ -93,6 +170,9 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/snapshot":
             self._send_json(200, self.server.session.snapshot_message())
+            return
+        if path == "/api/sessions":
+            self._send_json(200, self.server.session_payload())
             return
         if path == "/api/pair":
             info = self.server.session.pair_info(
@@ -213,6 +293,109 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             except OSError as exc:
                 self._send_json(500, {"error": str(exc)})
             return
+        if parsed.path == "/api/sessions/save":
+            try:
+                payload = self._read_json_object_optional()
+                title = payload.get("title")
+                if title is not None and not isinstance(title, str):
+                    raise DocumentError("title must be a string")
+                if isinstance(title, str) and title.strip():
+                    self.server.session.session_title = title.strip()
+                meta = self.server.ensure_bound_session()
+                self._send_json(200, {"session": meta, **self.server.session_payload()})
+            except DocumentError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+        if parsed.path == "/api/sessions/new":
+            try:
+                payload = self._read_json_object_optional()
+                title = payload.get("title")
+                if title is not None and not isinstance(title, str):
+                    raise DocumentError("title must be a string")
+                self.server.flush_autosave()
+                label = title.strip() if isinstance(title, str) and title.strip() else "Untitled"
+                doc = Document()
+                meta = self.server.store.create(doc, title=label)
+                self.server.session.replace_document(
+                    doc,
+                    session_id=meta.id,
+                    session_title=meta.title,
+                )
+                self._send_json(
+                    200,
+                    {
+                        "session": meta.to_dict(),
+                        "snapshot": self.server.session.snapshot_message(),
+                        **self.server.session_payload(),
+                    },
+                )
+            except DocumentError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+        if parsed.path == "/api/sessions/load":
+            try:
+                payload = self._read_json_object()
+                sid = payload.get("id")
+                if not isinstance(sid, str) or not sid:
+                    raise DocumentError("id required")
+                self.server.flush_autosave()
+                meta, doc = self.server.store.load(sid)
+                self.server.session.replace_document(
+                    doc,
+                    session_id=meta.id,
+                    session_title=meta.title,
+                )
+                self._send_json(
+                    200,
+                    {
+                        "session": meta.to_dict(),
+                        "snapshot": self.server.session.snapshot_message(),
+                        **self.server.session_payload(),
+                    },
+                )
+            except DocumentError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+        if parsed.path == "/api/sessions/rename":
+            try:
+                payload = self._read_json_object()
+                sid = payload.get("id")
+                title = payload.get("title")
+                if not isinstance(sid, str) or not sid:
+                    raise DocumentError("id required")
+                if not isinstance(title, str):
+                    raise DocumentError("title must be a string")
+                meta = self.server.store.rename(sid, title)
+                if self.server.session.session_id == sid:
+                    self.server.session.bind_session(meta.id, meta.title)
+                    self.server.session.broadcast_snapshot()
+                self._send_json(200, {"session": meta.to_dict(), **self.server.session_payload()})
+            except DocumentError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+        if parsed.path == "/api/sessions/delete":
+            try:
+                payload = self._read_json_object()
+                sid = payload.get("id")
+                if not isinstance(sid, str) or not sid:
+                    raise DocumentError("id required")
+                if self.server.session.session_id == sid:
+                    raise DocumentError("cannot delete the active session")
+                self.server.store.delete(sid)
+                self._send_json(200, self.server.session_payload())
+            except DocumentError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
         if parsed.path != "/api/op":
             self._send_json(404, {"error": f"unknown path {parsed.path}"})
             return
@@ -222,6 +405,20 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             self._send_json(200, message)
         except DocumentError as exc:
             self._send_json(400, {"error": str(exc)})
+
+    def _read_json_object_optional(self) -> dict[str, Any]:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length)
+        if not raw.strip():
+            return {}
+        parsed: object = json.loads(raw.decode("utf-8") or "null")
+        if parsed is None:
+            return {}
+        if not isinstance(parsed, dict):
+            raise DocumentError("JSON body must be an object")
+        return {str(k): v for k, v in parsed.items()}
 
     def _read_json_object(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -369,6 +566,27 @@ async def _run_ws(session: SketchSession, host: str, port: int) -> None:
         await asyncio.Future()
 
 
+def _resolve_startup_document(
+    store: SessionStore,
+    *,
+    load: str | None,
+    resume: bool,
+) -> tuple[Document, str | None, str]:
+    """Return (document, session_id, title) for host startup."""
+    if load:
+        candidate = Path(load)
+        if candidate.is_file():
+            return Document.load(candidate), None, candidate.stem
+        meta, doc = store.load(load)
+        return doc, meta.id, meta.title
+    if resume:
+        latest = store.latest()
+        if latest is not None:
+            meta, doc = store.load(latest.id)
+            return doc, meta.id, meta.title
+    return Document(), None, "Untitled"
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="apeSketch ink Session host")
     parser.add_argument("--host", default=DEFAULT_HOST)
@@ -380,9 +598,26 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="serve HTTP board without WebSocket (POST /api/op only)",
     )
+    parser.add_argument(
+        "--load",
+        default=None,
+        help="open a saved session id or a .apesketch.json path",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="open the most recently updated saved session",
+    )
     args = parser.parse_args(argv)
 
-    session = SketchSession(Document(), assets=AssetStore(ASSET_DIR))
+    store = SessionStore(SESSIONS_DIR)
+    document, session_id, session_title = _resolve_startup_document(
+        store,
+        load=args.load,
+        resume=args.resume,
+    )
+    session = SketchSession(document, assets=AssetStore(ASSET_DIR))
+    session.bind_session(session_id, session_title)
     http_port = args.port
     ws_port = args.ws_port if args.ws_port is not None else http_port + 1
     advertise = _lan_ip()
@@ -392,6 +627,7 @@ def main(argv: list[str] | None = None) -> None:
         session,
         advertise_host=advertise,
         ws_port=ws_port,
+        store=store,
     )
     thread = threading.Thread(target=http.serve_forever, daemon=True)
     thread.start()
@@ -400,6 +636,13 @@ def main(argv: list[str] | None = None) -> None:
     print(f"apeSketch board  {board_url}", flush=True)
     print(f"apeSketch pair   http://{advertise}:{http_port}/pair", flush=True)
     print(f"apeSketch room   {session.room_code}", flush=True)
+    if session.session_id:
+        print(
+            f"apeSketch session {session.session_id} · {session.session_title}",
+            flush=True,
+        )
+    else:
+        print(f"apeSketch sessions {SESSIONS_DIR}", flush=True)
 
     if not args.no_browser:
         webbrowser.open(f"http://127.0.0.1:{http_port}/")
@@ -411,6 +654,7 @@ def main(argv: list[str] | None = None) -> None:
         except KeyboardInterrupt:
             pass
         finally:
+            http.flush_autosave()
             http.shutdown()
         return
 
@@ -421,6 +665,7 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        http.flush_autosave()
         http.shutdown()
 
 

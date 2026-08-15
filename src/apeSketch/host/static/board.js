@@ -9,13 +9,27 @@
   const btnPen = document.getElementById("btn-pen");
   const btnEraseStroke = document.getElementById("btn-erase-stroke");
   const btnErasePartial = document.getElementById("btn-erase-partial");
+  const btnText = document.getElementById("btn-text");
+  const textEditor = document.getElementById("text-editor");
   const dockStyle = document.getElementById("dock-style");
   const dockEraser = document.getElementById("dock-eraser");
+  const dockText = document.getElementById("dock-text");
   const dockExport = document.getElementById("dock-export");
+  const dockSessions = document.getElementById("dock-sessions");
+  const sessionTitleInput = document.getElementById("session-title");
+  const sessionListEl = document.getElementById("session-list");
   const inkWidthInput = document.getElementById("ink-width");
   const inkWidthLabel = document.getElementById("ink-width-label");
   const eraserSizeInput = document.getElementById("eraser-size");
   const eraserSizeLabel = document.getElementById("eraser-size-label");
+  const textSizeInput = document.getElementById("text-size");
+  const textSizeLabel = document.getElementById("text-size-label");
+  const btnTextBold = document.getElementById("btn-text-bold");
+  const btnTextItalic = document.getElementById("btn-text-italic");
+  const btnTextBullet = document.getElementById("btn-text-bullet");
+  const btnTextNumber = document.getElementById("btn-text-number");
+  const btnTextIndent = document.getElementById("btn-text-indent");
+  const btnTextOutdent = document.getElementById("btn-text-outdent");
   const fileImageInput = document.getElementById("file-image");
   const btnRecord = document.getElementById("btn-record");
 
@@ -27,13 +41,17 @@
   let pointBuffer = [];
   let flushTimer = null;
   const author = `web-${Math.random().toString(36).slice(2, 8)}`;
+  let activeSessionId = null;
+  let activeSessionTitle = "Untitled";
+  let sessionCatalog = [];
+  let sessionsDockOpen = false;
 
   const view = { x: 0, y: 0, scale: 1 };
   const MIN_SCALE = 0.1;
   const MAX_SCALE = 8;
   const ZOOM_STEP = 1.15;
 
-  /** @type {"pen"|"erase-stroke"|"erase-partial"} */
+  /** @type {"pen"|"erase-stroke"|"erase-partial"|"text"} */
   let tool = "pen";
   let toolBeforeEraserTip = "pen";
   let eraserTipActive = false;
@@ -46,6 +64,7 @@
   let pageBackground = "#fafaf7";
   let styleDockOpen = false;
   let eraserDockOpen = false;
+  let textDockOpen = false;
   let exportDockOpen = false;
   const imageElCache = new Map();
   let mediaRecorder = null;
@@ -54,7 +73,25 @@
   let selectedImageId = null;
   let imageGesture = null;
   let imagePress = null;
+  let selectedTextId = null;
+  let textGesture = null;
+  let textPress = null;
+  let editingTextId = null;
+  let editingTextBaseline = "";
+  /** @type {{ textId: string, selectAll: boolean } | null} */
+  let pendingTextEdit = null;
+  /** @type {{ startX: number, startY: number, curX: number, curY: number, pointerId: number } | null} */
+  let textCreateDrag = null;
+  let ignoreTextEditorBlur = false;
   const MIN_IMAGE_SIZE = 24;
+  const MIN_TEXT_SIZE = 40;
+  const DEFAULT_TEXT_WIDTH = 240;
+  const DEFAULT_TEXT_HEIGHT = 72;
+  const DEFAULT_TEXT_FONT = 28;
+  const TEXT_CREATE_DRAG_MIN = 12;
+  let textFontSize = DEFAULT_TEXT_FONT;
+  let textBold = false;
+  let textItalic = false;
   const IMAGE_HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
   const IMAGE_CORNER_HANDLES = new Set(["nw", "ne", "se", "sw"]);
   const LONG_PRESS_MS = 550;
@@ -341,10 +378,18 @@
   }
 
   function setTool(next) {
+    if (editingTextId) commitTextEditor();
+    if (textCreateDrag) {
+      textCreateDrag = null;
+      scheduleOverlay();
+    }
     tool = next;
     btnPen.classList.toggle("active", tool === "pen");
     btnEraseStroke.classList.toggle("active", tool === "erase-stroke");
     btnErasePartial.classList.toggle("active", tool === "erase-partial");
+    if (btnText) btnText.classList.toggle("active", tool === "text");
+    if (tool === "text") setTextDockOpen(true);
+    else setTextDockOpen(false);
     updateCursor();
     scheduleOverlay();
   }
@@ -356,7 +401,9 @@
     if (styleDockOpen) {
       dockStyle.removeAttribute("hidden");
       setEraserDockOpen(false);
+      setTextDockOpen(false);
       setExportDockOpen(false);
+      setSessionsDockOpen(false);
     } else {
       dockStyle.setAttribute("hidden", "");
     }
@@ -373,7 +420,9 @@
     if (eraserDockOpen) {
       dockEraser.removeAttribute("hidden");
       setStyleDockOpen(false);
+      setTextDockOpen(false);
       setExportDockOpen(false);
+      setSessionsDockOpen(false);
     } else {
       dockEraser.setAttribute("hidden", "");
     }
@@ -381,6 +430,26 @@
 
   function toggleEraserDock() {
     setEraserDockOpen(!eraserDockOpen);
+  }
+
+  function setTextDockOpen(open) {
+    textDockOpen = !!open;
+    if (!dockText) return;
+    dockText.classList.toggle("open", textDockOpen);
+    if (textDockOpen) {
+      dockText.removeAttribute("hidden");
+      setStyleDockOpen(false);
+      setEraserDockOpen(false);
+      setExportDockOpen(false);
+      setSessionsDockOpen(false);
+      syncTextStyleControls();
+    } else {
+      dockText.setAttribute("hidden", "");
+    }
+  }
+
+  function toggleTextDock() {
+    setTextDockOpen(!textDockOpen);
   }
 
   function setExportDockOpen(open) {
@@ -391,6 +460,8 @@
       dockExport.removeAttribute("hidden");
       setStyleDockOpen(false);
       setEraserDockOpen(false);
+      setTextDockOpen(false);
+      setSessionsDockOpen(false);
     } else {
       dockExport.setAttribute("hidden", "");
     }
@@ -398,6 +469,203 @@
 
   function toggleExportDock() {
     setExportDockOpen(!exportDockOpen);
+  }
+
+  function setSessionsDockOpen(open) {
+    sessionsDockOpen = !!open;
+    if (!dockSessions) return;
+    dockSessions.classList.toggle("open", sessionsDockOpen);
+    if (sessionsDockOpen) {
+      dockSessions.removeAttribute("hidden");
+      setStyleDockOpen(false);
+      setEraserDockOpen(false);
+      setTextDockOpen(false);
+      setExportDockOpen(false);
+      refreshSessions().catch(() => {});
+    } else {
+      dockSessions.setAttribute("hidden", "");
+    }
+  }
+
+  function toggleSessionsDock() {
+    setSessionsDockOpen(!sessionsDockOpen);
+  }
+
+  function formatSessionWhen(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function applySessionInfo(info) {
+    if (!info) return;
+    if (typeof info.active_id === "string" || info.active_id === null) {
+      activeSessionId = info.active_id || null;
+    }
+    if (typeof info.title === "string") {
+      activeSessionTitle = info.title || "Untitled";
+    }
+    if (Array.isArray(info.sessions)) {
+      sessionCatalog = info.sessions;
+    }
+    if (sessionTitleInput && document.activeElement !== sessionTitleInput) {
+      sessionTitleInput.value = activeSessionTitle;
+    }
+    renderSessionList();
+  }
+
+  function renderSessionList() {
+    if (!sessionListEl) return;
+    sessionListEl.innerHTML = "";
+    if (!sessionCatalog.length) {
+      const empty = document.createElement("div");
+      empty.className = "label";
+      empty.textContent = "No saved sessions yet";
+      sessionListEl.appendChild(empty);
+      return;
+    }
+    for (const item of sessionCatalog) {
+      const row = document.createElement("div");
+      row.className = "session-item" + (item.id === activeSessionId ? " active" : "");
+      row.setAttribute("role", "listitem");
+
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.style.cssText =
+        "flex:1;min-width:0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer;padding:0;font:inherit;";
+      openBtn.title = "Open session";
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = item.title || "Untitled";
+      const when = document.createElement("span");
+      when.className = "when";
+      when.textContent = formatSessionWhen(item.updated_at);
+      meta.appendChild(name);
+      meta.appendChild(when);
+      openBtn.appendChild(meta);
+      openBtn.onclick = () => {
+        loadSession(item.id).catch((err) => setStatus(String(err.message || err)));
+      };
+
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "del";
+      del.title = "Delete";
+      del.textContent = "×";
+      del.disabled = item.id === activeSessionId;
+      del.onclick = (ev) => {
+        ev.stopPropagation();
+        deleteSession(item.id).catch((err) => setStatus(String(err.message || err)));
+      };
+
+      row.appendChild(openBtn);
+      row.appendChild(del);
+      sessionListEl.appendChild(row);
+    }
+  }
+
+  async function refreshSessions() {
+    const res = await fetch("/api/sessions");
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `sessions failed (${res.status})`);
+    applySessionInfo(data);
+    return data;
+  }
+
+  async function postSession(path, body) {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (_) {
+      data = null;
+    }
+    if (!res.ok) {
+      throw new Error((data && data.error) || `request failed (${res.status})`);
+    }
+    applySessionInfo(data);
+    if (data && data.snapshot) applySnapshotMessage(data.snapshot);
+    return data;
+  }
+
+  async function saveSessionNow() {
+    const title = sessionTitleInput ? sessionTitleInput.value.trim() : activeSessionTitle;
+    const data = await postSession("/api/sessions/save", { title: title || "Untitled" });
+    setStatus(`saved · ${data.session && data.session.title ? data.session.title : "session"}`);
+  }
+
+  async function newSession() {
+    const title = sessionTitleInput ? sessionTitleInput.value.trim() : "";
+    await postSession("/api/sessions/new", title ? { title } : {});
+    setStatus("new session");
+  }
+
+  async function loadSession(id) {
+    if (!id || id === activeSessionId) return;
+    await postSession("/api/sessions/load", { id });
+    setStatus(`opened · ${activeSessionTitle}`);
+  }
+
+  async function deleteSession(id) {
+    if (!id || id === activeSessionId) return;
+    await postSession("/api/sessions/delete", { id });
+    setStatus("session deleted");
+  }
+
+  async function renameActiveSession() {
+    if (!activeSessionId || !sessionTitleInput) return;
+    const title = sessionTitleInput.value.trim() || "Untitled";
+    await postSession("/api/sessions/rename", { id: activeSessionId, title });
+  }
+
+  function applySnapshotMessage(msg) {
+    if (!msg || !msg.document) return;
+    documentState = msg.document;
+    if (msg.session) {
+      activeSessionId = msg.session.id || null;
+      activeSessionTitle = msg.session.title || "Untitled";
+      if (sessionTitleInput && document.activeElement !== sessionTitleInput) {
+        sessionTitleInput.value = activeSessionTitle;
+      }
+    }
+    setSelectedImage(null);
+    setSelectedText(null);
+    if (textEditor && !textEditor.hidden) {
+      textEditor.hidden = true;
+      textEditor.setAttribute("hidden", "");
+      textEditor.innerHTML = "";
+    }
+    editingTextId = null;
+    editingTextBaseline = "";
+    currentStrokeId = null;
+    livePoints = null;
+    pointBuffer = [];
+    const page =
+      documentState &&
+      documentState.pages &&
+      documentState.pages[documentState.active_page_id || "p0"];
+    if (page && page.background) {
+      applyPageBackground(page.background);
+    }
+    if (page && page.images) {
+      for (const iid of page.image_order || Object.keys(page.images)) {
+        const image = page.images[iid];
+        if (image && image.asset_id) ensureImageAsset(image.asset_id);
+      }
+    }
+    scheduleRedraw();
   }
 
   function syncInkKindButtons() {
@@ -625,6 +893,756 @@
     }
   }
 
+  function textFontCss(fontSize, bold, italic) {
+    const style = italic ? "italic" : "normal";
+    const weight = bold ? "700" : "400";
+    return `${style} ${weight} ${fontSize}px "Segoe UI", system-ui, sans-serif`;
+  }
+
+  function ensureTextBlocks(text) {
+    if (!text) return [{ kind: "p", indent: 0, runs: [{ text: "" }] }];
+    if (Array.isArray(text.blocks) && text.blocks.length) return text.blocks;
+    const lines = String(text.content || "").split("\n");
+    return lines.map((line) => ({
+      kind: "p",
+      indent: 0,
+      runs: [{ text: line }],
+    }));
+  }
+
+  function flattenBlocksPlain(blocks) {
+    return (blocks || []).map((b) => (b.runs || []).map((r) => r.text || "").join("")).join("\n");
+  }
+
+  function resolveRunStyle(run, text) {
+    return {
+      text: run.text || "",
+      font_size: run.font_size != null ? run.font_size : text.font_size || DEFAULT_TEXT_FONT,
+      bold: run.bold != null ? !!run.bold : !!text.bold,
+      italic: run.italic != null ? !!run.italic : !!text.italic,
+      color: run.color != null ? run.color : text.color || "#111111",
+    };
+  }
+
+  function measureRunsWidth(targetCtx, runs, text) {
+    let w = 0;
+    for (const run of runs) {
+      const style = resolveRunStyle(run, text);
+      targetCtx.font = textFontCss(style.font_size, style.bold, style.italic);
+      w += targetCtx.measureText(style.text).width;
+    }
+    return w;
+  }
+
+  /** Wrap a block's runs into visual lines of {runs, height}. */
+  function wrapBlockRuns(targetCtx, block, text, maxWidth) {
+    const lines = [];
+    let lineRuns = [];
+    let lineWidth = 0;
+    let lineHeight = text.font_size || DEFAULT_TEXT_FONT;
+
+    function pushLine() {
+      if (!lineRuns.length) {
+        lines.push({
+          runs: [{ text: "", font_size: lineHeight, bold: false, italic: false, color: text.color }],
+          height: lineHeight * 1.25,
+        });
+      } else {
+        lines.push({ runs: lineRuns, height: lineHeight * 1.25 });
+      }
+      lineRuns = [];
+      lineWidth = 0;
+      lineHeight = text.font_size || DEFAULT_TEXT_FONT;
+    }
+
+    const allRuns = block.runs && block.runs.length ? block.runs : [{ text: "" }];
+    for (const raw of allRuns) {
+      const style = resolveRunStyle(raw, text);
+      const parts = style.text.split(/(\s+)/);
+      for (const part of parts) {
+        if (!part) continue;
+        targetCtx.font = textFontCss(style.font_size, style.bold, style.italic);
+        const partW = targetCtx.measureText(part).width;
+        if (lineRuns.length && lineWidth + partW > maxWidth && !/^\s+$/.test(part)) {
+          pushLine();
+        }
+        lineRuns.push({
+          text: part,
+          font_size: style.font_size,
+          bold: style.bold,
+          italic: style.italic,
+          color: style.color,
+        });
+        lineWidth += partW;
+        lineHeight = Math.max(lineHeight, style.font_size);
+      }
+    }
+    pushLine();
+    return lines;
+  }
+
+  function drawPageTexts(page) {
+    if (!page || !page.text_order || !page.texts) return;
+    ctx.save();
+    for (const tid of page.text_order) {
+      if (tid === editingTextId) continue;
+      const text = page.texts[tid];
+      if (!text) continue;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(text.x, text.y, text.width, text.height);
+      ctx.clip();
+
+      const blocks = ensureTextBlocks(text);
+      let y = text.y + 4;
+      const olCounters = {};
+      for (const block of blocks) {
+        const indentPx = 18 * (block.indent || 0);
+        let marker = "";
+        if (block.kind === "ul") marker = "•";
+        else if (block.kind === "ol") {
+          olCounters[block.indent || 0] = (olCounters[block.indent || 0] || 0) + 1;
+          for (const k of Object.keys(olCounters)) {
+            if (Number(k) > (block.indent || 0)) delete olCounters[k];
+          }
+          marker = `${olCounters[block.indent || 0]}.`;
+        }
+        const markerW = marker ? 18 : 0;
+        const maxW = Math.max(8, text.width - 8 - indentPx - markerW);
+        const lines = wrapBlockRuns(ctx, block, text, maxW);
+        for (const line of lines) {
+          if (y > text.y + text.height) break;
+          let x = text.x + 4 + indentPx;
+          if (marker) {
+            const fs = text.font_size || DEFAULT_TEXT_FONT;
+            ctx.font = textFontCss(fs * 0.9, false, false);
+            ctx.fillStyle = text.color || "#111111";
+            ctx.textBaseline = "top";
+            ctx.fillText(marker, x, y);
+            x += markerW;
+            marker = ""; // only first line of block
+          }
+          for (const run of line.runs) {
+            ctx.font = textFontCss(run.font_size, run.bold, run.italic);
+            ctx.fillStyle = run.color;
+            ctx.textBaseline = "top";
+            ctx.fillText(run.text, x, y);
+            x += ctx.measureText(run.text).width;
+          }
+          y += line.height;
+        }
+        y += 2;
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function runToHtml(run, text) {
+    const style = resolveRunStyle(run, text);
+    let inner = escapeHtml(style.text).replace(/\n/g, "<br>");
+    const needsSpan =
+      run.font_size != null ||
+      run.color != null ||
+      (run.bold != null && run.bold !== !!text.bold) ||
+      (run.italic != null && run.italic !== !!text.italic);
+    if (needsSpan || run.font_size != null) {
+      const css = [
+        run.font_size != null ? `font-size:${run.font_size}px` : "",
+        run.color != null ? `color:${run.color}` : "",
+      ]
+        .filter(Boolean)
+        .join(";");
+      const attrs = run.font_size != null ? ` data-fs="${run.font_size}"` : "";
+      inner = `<span${attrs}${css ? ` style="${css}"` : ""}>${inner}</span>`;
+    }
+    if (style.bold) inner = `<b>${inner}</b>`;
+    if (style.italic) inner = `<i>${inner}</i>`;
+    return inner;
+  }
+
+  function blocksToHtml(blocks, text) {
+    const parts = [];
+    let i = 0;
+    while (i < blocks.length) {
+      const block = blocks[i];
+      if (block.kind === "ul" || block.kind === "ol") {
+        const kind = block.kind;
+        const indent = block.indent || 0;
+        const tag = kind === "ul" ? "ul" : "ol";
+        const items = [];
+        while (
+          i < blocks.length &&
+          blocks[i].kind === kind &&
+          (blocks[i].indent || 0) === indent
+        ) {
+          const html = (blocks[i].runs || [])
+            .map((r) => runToHtml(r, text))
+            .join("");
+          items.push(
+            `<li style="margin-left:${indent * 18}px">${html || "<br>"}</li>`
+          );
+          i++;
+        }
+        parts.push(`<${tag}>${items.join("")}</${tag}>`);
+        continue;
+      }
+      const html = (block.runs || []).map((r) => runToHtml(r, text)).join("");
+      const pad = block.indent ? ` style="margin-left:${block.indent * 18}px"` : "";
+      parts.push(`<p${pad}>${html || "<br>"}</p>`);
+      i++;
+    }
+    return parts.join("") || "<p><br></p>";
+  }
+
+  function parseInlineRuns(node, inherited) {
+    const runs = [];
+    function walk(n, style) {
+      if (n.nodeType === Node.TEXT_NODE) {
+        const t = n.textContent || "";
+        if (!t) return;
+        runs.push({
+          text: t,
+          font_size: style.font_size,
+          bold: style.bold,
+          italic: style.italic,
+          color: style.color,
+        });
+        return;
+      }
+      if (n.nodeType !== Node.ELEMENT_NODE) return;
+      const tag = n.tagName.toLowerCase();
+      if (tag === "br") {
+        runs.push({ text: "\n", ...style });
+        return;
+      }
+      const next = { ...style };
+      if (tag === "b" || tag === "strong") next.bold = true;
+      if (tag === "i" || tag === "em") next.italic = true;
+      if (n.hasAttribute && n.hasAttribute("data-fs")) {
+        const fs = Number(n.getAttribute("data-fs"));
+        if (fs > 0) next.font_size = fs;
+      }
+      if (n.style && n.style.fontSize) {
+        const fs = parseFloat(n.style.fontSize);
+        if (fs > 0) next.font_size = fs;
+      }
+      if (n.style && n.style.fontWeight) {
+        const w = n.style.fontWeight;
+        if (w === "bold" || Number(w) >= 600) next.bold = true;
+        if (w === "normal" || Number(w) < 600) next.bold = false;
+      }
+      if (n.style && n.style.fontStyle === "italic") next.italic = true;
+      if (n.style && n.style.fontStyle === "normal") next.italic = false;
+      for (const child of n.childNodes) walk(child, next);
+    }
+    walk(node, inherited);
+    if (!runs.length) runs.push({ text: "" });
+    // Merge adjacent identical styles
+    const merged = [];
+    for (const run of runs) {
+      const prev = merged[merged.length - 1];
+      if (
+        prev &&
+        prev.font_size === run.font_size &&
+        prev.bold === run.bold &&
+        prev.italic === run.italic &&
+        prev.color === run.color &&
+        !prev.text.includes("\n") &&
+        !run.text.includes("\n")
+      ) {
+        prev.text += run.text;
+      } else {
+        merged.push({ ...run });
+      }
+    }
+    return merged;
+  }
+
+  function htmlToBlocks(root, defaults) {
+    const blocks = [];
+    const base = {
+      font_size: null,
+      bold: null,
+      italic: null,
+      color: null,
+    };
+
+    function pushParagraph(el, indent) {
+      const runs = parseInlineRuns(el, base);
+      // Split on hard newlines into multiple p blocks
+      let current = [];
+      const flush = () => {
+        blocks.push({
+          kind: "p",
+          indent: Math.min(6, Math.max(0, indent || 0)),
+          runs: current.length ? current : [{ text: "" }],
+        });
+        current = [];
+      };
+      for (const run of runs) {
+        const parts = String(run.text).split("\n");
+        for (let i = 0; i < parts.length; i++) {
+          if (i > 0) flush();
+          if (parts[i] || i === 0) {
+            current.push({
+              text: parts[i],
+              font_size: run.font_size,
+              bold: run.bold,
+              italic: run.italic,
+              color: run.color,
+            });
+          }
+        }
+      }
+      flush();
+    }
+
+    function listIndent(el) {
+      const ml = el.style && el.style.marginLeft ? parseFloat(el.style.marginLeft) : 0;
+      if (ml > 0) return Math.min(6, Math.round(ml / 18));
+      return 0;
+    }
+
+    const children = [...root.childNodes];
+    if (!children.length) {
+      return [{ kind: "p", indent: 0, runs: [{ text: "" }] }];
+    }
+    for (const child of children) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const t = (child.textContent || "").trim();
+        if (t) pushParagraph(child, 0);
+        continue;
+      }
+      if (child.nodeType !== Node.ELEMENT_NODE) continue;
+      const tag = child.tagName.toLowerCase();
+      if (tag === "ul" || tag === "ol") {
+        const kind = tag === "ul" ? "ul" : "ol";
+        for (const li of child.querySelectorAll(":scope > li")) {
+          const runs = parseInlineRuns(li, base);
+          blocks.push({
+            kind,
+            indent: listIndent(li),
+            runs: runs.length ? runs : [{ text: "" }],
+          });
+        }
+      } else if (tag === "p" || tag === "div") {
+        pushParagraph(child, listIndent(child));
+      } else {
+        pushParagraph(child, 0);
+      }
+    }
+    return blocks.length ? blocks : [{ kind: "p", indent: 0, runs: [{ text: "" }] }];
+  }
+
+  function editorHasSelection() {
+    if (!textEditor || textEditor.hidden) return false;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return false;
+    if (sel.isCollapsed) return false;
+    return textEditor.contains(sel.anchorNode);
+  }
+
+  function applyFontSizeToSelection(size) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false;
+    if (!textEditor || !textEditor.contains(sel.anchorNode)) return false;
+    const range = sel.getRangeAt(0);
+    const span = document.createElement("span");
+    span.setAttribute("data-fs", String(size));
+    span.style.fontSize = `${size}px`;
+    try {
+      range.surroundContents(span);
+    } catch (_) {
+      const frag = range.extractContents();
+      if (frag.querySelectorAll) {
+        frag.querySelectorAll("[data-fs]").forEach((el) => {
+          const parent = el.parentNode;
+          if (!parent) return;
+          while (el.firstChild) parent.insertBefore(el.firstChild, el);
+          el.remove();
+        });
+      }
+      span.appendChild(frag);
+      range.insertNode(span);
+    }
+    sel.removeAllRanges();
+    const next = document.createRange();
+    next.selectNodeContents(span);
+    sel.addRange(next);
+    return true;
+  }
+
+  function syncTextStyleControls() {
+    // Don't fight the user while they drag the size slider.
+    if (textSizeInput && document.activeElement !== textSizeInput) {
+      textSizeInput.value = String(textFontSize);
+    }
+    if (textSizeLabel) textSizeLabel.textContent = String(Math.round(textFontSize));
+    if (btnTextBold) btnTextBold.classList.toggle("active", textBold);
+    if (btnTextItalic) btnTextItalic.classList.toggle("active", textItalic);
+  }
+
+  function applyTextStyleToEditor() {
+    if (!textEditor || textEditor.hidden) return;
+    const text = editingTextId ? getText(editingTextId) : null;
+    const size = (text && text.font_size) || textFontSize;
+    textEditor.style.fontSize = `${Math.max(12, size * view.scale)}px`;
+    textEditor.style.fontWeight = (text ? text.bold : textBold) ? "700" : "400";
+    textEditor.style.fontStyle = (text ? text.italic : textItalic) ? "italic" : "normal";
+    if (text) textEditor.style.color = text.color || "#111111";
+  }
+
+  function styledTextTargetId() {
+    if (editingTextId) return editingTextId;
+    if (selectedTextId) return selectedTextId;
+    return null;
+  }
+
+  function commitTextFontSize(size) {
+    const next = Math.max(12, Math.min(96, Number(size) || DEFAULT_TEXT_FONT));
+    textFontSize = next;
+    if (textSizeLabel) textSizeLabel.textContent = String(Math.round(next));
+
+    if (editingTextId && textEditor && !textEditor.hidden && editorHasSelection()) {
+      applyFontSizeToSelection(next);
+      return;
+    }
+
+    const textId = styledTextTargetId();
+    if (textId) {
+      const text = getText(textId);
+      if (!text || text.locked) {
+        setStatus("text locked");
+        return;
+      }
+      if (text.font_size === next) {
+        applyTextStyleToEditor();
+        return;
+      }
+      text.font_size = next;
+      sendOp({
+        op: "set_text_style",
+        text_id: textId,
+        page_id: "p0",
+        font_size: next,
+      });
+      applyTextStyleToEditor();
+      scheduleRedraw();
+      return;
+    }
+    syncTextStyleControls();
+  }
+
+  function pushTextStyle(partial) {
+    // While editing with a selection, apply to selection (DOM only until commit).
+    if (editingTextId && textEditor && !textEditor.hidden) {
+      if (partial.bold != null && editorHasSelection()) {
+        document.execCommand("bold");
+        return;
+      }
+      if (partial.italic != null && editorHasSelection()) {
+        document.execCommand("italic");
+        return;
+      }
+      if (partial.font_size != null) {
+        commitTextFontSize(partial.font_size);
+        return;
+      }
+      if ((partial.bold != null || partial.italic != null) && !editorHasSelection()) {
+        document.execCommand(partial.bold != null ? "bold" : "italic");
+        return;
+      }
+    }
+
+    if (partial.font_size != null) {
+      commitTextFontSize(partial.font_size);
+      return;
+    }
+
+    const textId = styledTextTargetId();
+    if (textId && !editingTextId) {
+      const text = getText(textId);
+      if (!text || text.locked) {
+        setStatus("text locked");
+        return;
+      }
+      if (partial.bold != null) text.bold = partial.bold;
+      if (partial.italic != null) text.italic = partial.italic;
+      if (partial.color != null) text.color = partial.color;
+      sendOp({
+        op: "set_text_style",
+        text_id: textId,
+        page_id: "p0",
+        ...partial,
+      });
+      loadTextStyleFromObject(text);
+      scheduleRedraw();
+      return;
+    }
+    if (partial.bold != null) textBold = partial.bold;
+    if (partial.italic != null) textItalic = partial.italic;
+    syncTextStyleControls();
+  }
+
+  function loadTextStyleFromObject(text) {
+    if (!text) return;
+    textFontSize = text.font_size || DEFAULT_TEXT_FONT;
+    textBold = !!text.bold;
+    textItalic = !!text.italic;
+    syncTextStyleControls();
+  }
+
+  function measureContentHeight(text) {
+    const blocks = ensureTextBlocks(text);
+    let y = 8;
+    const probe = document.createElement("canvas").getContext("2d");
+    for (const block of blocks) {
+      const indentPx = 18 * (block.indent || 0);
+      const markerW = block.kind === "ul" || block.kind === "ol" ? 18 : 0;
+      const maxW = Math.max(8, text.width - 8 - indentPx - markerW);
+      const lines = wrapBlockRuns(probe, block, text, maxW);
+      for (const line of lines) y += line.height;
+      y += 2;
+    }
+    return Math.max(MIN_TEXT_SIZE, y);
+  }
+
+  function getText(textId) {
+    const page = getPage();
+    return page && page.texts ? page.texts[textId] : null;
+  }
+
+  function setSelectedText(textId) {
+    if (selectedImageId) setSelectedImage(null);
+    selectedTextId = textId || null;
+    if (selectedTextId) loadTextStyleFromObject(getText(selectedTextId));
+    scheduleOverlay();
+  }
+
+  function setSelectedImage(imageId) {
+    if (imageId) {
+      if (editingTextId) commitTextEditor();
+      selectedTextId = null;
+    }
+    selectedImageId = imageId || null;
+    scheduleOverlay();
+  }
+
+  function hitTopTextAt(x, y) {
+    const page = getPage();
+    if (!page || !page.text_order) return null;
+    for (let i = page.text_order.length - 1; i >= 0; i--) {
+      const tid = page.text_order[i];
+      const text = page.texts && page.texts[tid];
+      if (text && pointInImage(text, x, y)) return tid;
+    }
+    return null;
+  }
+
+  function placeTextAt(worldX, worldY, width, height) {
+    const textId = `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const fontSize = textFontSize || DEFAULT_TEXT_FONT;
+    const blocks = [{ kind: "p", indent: 0, runs: [{ text: "" }] }];
+    const w = Math.max(MIN_TEXT_SIZE, width != null ? width : DEFAULT_TEXT_WIDTH);
+    const h = Math.max(
+      MIN_TEXT_SIZE,
+      height != null ? height : Math.max(fontSize * 2.2, DEFAULT_TEXT_HEIGHT)
+    );
+    sendOp({
+      op: "add_text",
+      text_id: textId,
+      content: "",
+      x: worldX,
+      y: worldY,
+      width: w,
+      height: h,
+      font_size: fontSize,
+      color: inkColor || "#111111",
+      bold: textBold,
+      italic: textItalic,
+      blocks,
+      author,
+      page_id: "p0",
+    });
+    setSelectedText(textId);
+    return textId;
+  }
+
+  function normalizeCreateRect(x0, y0, x1, y1) {
+    const x = Math.min(x0, x1);
+    const y = Math.min(y0, y1);
+    const width = Math.abs(x1 - x0);
+    const height = Math.abs(y1 - y0);
+    return { x, y, width, height };
+  }
+
+  function finishTextCreateDrag() {
+    if (!textCreateDrag) return null;
+    const drag = textCreateDrag;
+    textCreateDrag = null;
+    const rect = normalizeCreateRect(drag.startX, drag.startY, drag.curX, drag.curY);
+    const dragged =
+      rect.width >= TEXT_CREATE_DRAG_MIN || rect.height >= TEXT_CREATE_DRAG_MIN;
+    let textId;
+    if (dragged) {
+      textId = placeTextAt(
+        rect.x,
+        rect.y,
+        Math.max(MIN_TEXT_SIZE, rect.width),
+        Math.max(MIN_TEXT_SIZE, rect.height)
+      );
+    } else {
+      textId = placeTextAt(drag.startX, drag.startY);
+    }
+    scheduleOverlay();
+    return textId;
+  }
+
+  function worldToScreen(x, y) {
+    return { sx: x * view.scale + view.x, sy: y * view.scale + view.y };
+  }
+
+  function isTypingInTextEditor() {
+    return Boolean(
+      editingTextId &&
+        textEditor &&
+        !textEditor.hidden &&
+        (document.activeElement === textEditor || textEditor.contains(document.activeElement))
+    );
+  }
+
+  function openTextEditor(textId, selectAll) {
+    const text = getText(textId);
+    if (!text || !textEditor) return;
+    if (text.locked) {
+      setStatus("text locked");
+      return;
+    }
+    if (editingTextId && editingTextId !== textId) {
+      commitTextEditor();
+    }
+    editingTextId = textId;
+    const blocks = ensureTextBlocks(text);
+    editingTextBaseline = JSON.stringify(blocks);
+    loadTextStyleFromObject(text);
+    const topLeft = worldToScreen(text.x, text.y);
+    textEditor.removeAttribute("hidden");
+    textEditor.hidden = false;
+    textEditor.innerHTML = blocksToHtml(blocks, text);
+    textEditor.style.left = `${Math.max(8, topLeft.sx)}px`;
+    textEditor.style.top = `${Math.max(8, topLeft.sy)}px`;
+    textEditor.style.width = `${Math.max(80, text.width * view.scale)}px`;
+    textEditor.style.height = `${Math.max(40, text.height * view.scale)}px`;
+    textEditor.style.fontSize = `${Math.max(12, (text.font_size || DEFAULT_TEXT_FONT) * view.scale)}px`;
+    textEditor.style.fontWeight = text.bold ? "700" : "400";
+    textEditor.style.fontStyle = text.italic ? "italic" : "normal";
+    textEditor.style.color = text.color || "#111111";
+    textEditor.style.pointerEvents = "auto";
+    setTextDockOpen(true);
+    ignoreTextEditorBlur = true;
+    scheduleRedraw();
+    requestAnimationFrame(() => {
+      textEditor.focus({ preventScroll: true });
+      if (selectAll) {
+        const range = document.createRange();
+        range.selectNodeContents(textEditor);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      ignoreTextEditorBlur = false;
+    });
+  }
+
+  function commitTextEditor() {
+    if (!editingTextId || !textEditor) return;
+    const textId = editingTextId;
+    const text = getText(textId);
+    const blocks = htmlToBlocks(textEditor, text || {});
+    const content = flattenBlocksPlain(blocks);
+    const baseline = editingTextBaseline;
+    editingTextId = null;
+    editingTextBaseline = "";
+    textEditor.hidden = true;
+    textEditor.setAttribute("hidden", "");
+    textEditor.innerHTML = "";
+    if (!text) {
+      scheduleRedraw();
+      return;
+    }
+    text.blocks = blocks;
+    text.content = content;
+    const needed = measureContentHeight(text);
+    if (needed > text.height) {
+      text.height = needed;
+      sendOp({
+        op: "transform_text",
+        text_id: textId,
+        x: text.x,
+        y: text.y,
+        width: text.width,
+        height: text.height,
+        page_id: "p0",
+      });
+    }
+    const serialized = JSON.stringify(blocks);
+    if (serialized !== baseline) {
+      sendOp({
+        op: "set_text_content",
+        text_id: textId,
+        content,
+        blocks,
+        page_id: "p0",
+      });
+    } else {
+      scheduleRedraw();
+    }
+  }
+
+  function applyTextBoxLocal(textId, box) {
+    const text = getText(textId);
+    if (!text || text.locked) return;
+    text.x = box.x;
+    text.y = box.y;
+    text.width = box.width;
+    text.height = box.height;
+  }
+
+  function commitTextTransform(textId) {
+    const text = getText(textId);
+    if (!text || text.locked) return;
+    sendOp({
+      op: "transform_text",
+      text_id: textId,
+      x: text.x,
+      y: text.y,
+      width: text.width,
+      height: text.height,
+      page_id: "p0",
+    });
+  }
+
+  function toggleTextLock(textId) {
+    const text = getText(textId);
+    if (!text) return;
+    sendOp({
+      op: "set_text_lock",
+      text_id: textId,
+      locked: !text.locked,
+      page_id: "p0",
+    });
+    setStatus(text.locked ? "text unlocked" : "text locked");
+  }
+
   function getPage() {
     return documentState && documentState.pages
       ? documentState.pages[documentState.active_page_id || "p0"]
@@ -634,11 +1652,6 @@
   function getImage(imageId) {
     const page = getPage();
     return page && page.images ? page.images[imageId] : null;
-  }
-
-  function setSelectedImage(imageId) {
-    selectedImageId = imageId || null;
-    scheduleOverlay();
   }
 
   function imageHandlePoints(image) {
@@ -841,6 +1854,11 @@
   function clearImagePress() {
     if (imagePress && imagePress.timer) clearTimeout(imagePress.timer);
     imagePress = null;
+  }
+
+  function clearTextPress() {
+    if (textPress && textPress.timer) clearTimeout(textPress.timer);
+    textPress = null;
   }
 
   function toggleImageLock(imageId) {
@@ -1385,11 +2403,29 @@
     const screenH = overlay.clientHeight;
     octx.setTransform(dpr, 0, 0, dpr, 0, 0);
     octx.clearRect(0, 0, screenW, screenH);
-    const selected = selectedImageId ? getImage(selectedImageId) : null;
-    if (!selected && !eraserCursor) return;
+    const selectedImage = selectedImageId ? getImage(selectedImageId) : null;
+    const selectedText = selectedTextId ? getText(selectedTextId) : null;
+    const selected = selectedImage || selectedText;
+    if (!selected && !eraserCursor && !textCreateDrag) return;
     octx.save();
     octx.translate(view.x, view.y);
     octx.scale(view.scale, view.scale);
+
+    if (textCreateDrag) {
+      const rect = normalizeCreateRect(
+        textCreateDrag.startX,
+        textCreateDrag.startY,
+        textCreateDrag.curX,
+        textCreateDrag.curY
+      );
+      octx.strokeStyle = "rgba(47, 93, 80, 0.85)";
+      octx.fillStyle = "rgba(47, 93, 80, 0.08)";
+      octx.lineWidth = 1.5 / view.scale;
+      octx.setLineDash([6 / view.scale, 4 / view.scale]);
+      octx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      octx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      octx.setLineDash([]);
+    }
 
     if (selected) {
       const hs = Math.max(7 / view.scale, 5);
@@ -1404,10 +2440,10 @@
       if (!selected.locked) {
         const points = imageHandlePoints(selected);
         for (const id of IMAGE_HANDLES) {
-          const p = points[id];
-          octx.fillRect(p.x - hs / 2, p.y - hs / 2, hs, hs);
+          const pt = points[id];
+          octx.fillRect(pt.x - hs / 2, pt.y - hs / 2, hs, hs);
           octx.strokeStyle = "rgba(47, 93, 80, 0.95)";
-          octx.strokeRect(p.x - hs / 2, p.y - hs / 2, hs, hs);
+          octx.strokeRect(pt.x - hs / 2, pt.y - hs / 2, hs, hs);
         }
       }
       drawLockIcon(selected);
@@ -1656,6 +2692,7 @@
 
     applyViewTransform();
     drawPageImages(page);
+    drawPageTexts(page);
 
     const bakeSkip = new Set();
     if (partialSession) {
@@ -1871,7 +2908,14 @@
       page.stroke_order = [];
       page.images = {};
       page.image_order = [];
+      page.texts = {};
+      page.text_order = [];
       setSelectedImage(null);
+      setSelectedText(null);
+      if (editingTextId) {
+        editingTextId = null;
+        if (textEditor) textEditor.hidden = true;
+      }
     } else if (op.op === "set_background") {
       applyPageBackground(op.color);
     } else if (op.op === "add_image") {
@@ -1909,6 +2953,75 @@
       if (!page.images) page.images = {};
       const image = page.images[op.image_id];
       if (image) image.locked = !!op.locked;
+    } else if (op.op === "add_text") {
+      if (!page.texts) page.texts = {};
+      if (!page.text_order) page.text_order = [];
+      if (!page.texts[op.text_id]) {
+        const blocks =
+          Array.isArray(op.blocks) && op.blocks.length
+            ? op.blocks
+            : [{ kind: "p", indent: 0, runs: [{ text: op.content || "" }] }];
+        page.texts[op.text_id] = {
+          text_id: op.text_id,
+          content: op.content || flattenBlocksPlain(blocks),
+          x: op.x,
+          y: op.y,
+          width: op.width,
+          height: op.height,
+          font_size: op.font_size || DEFAULT_TEXT_FONT,
+          color: op.color || "#111111",
+          bold: !!op.bold,
+          italic: !!op.italic,
+          author: op.author || "",
+          layer: op.layer || "text",
+          locked: false,
+          blocks,
+        };
+        page.text_order.push(op.text_id);
+      }
+    } else if (op.op === "set_text_content") {
+      const text = page.texts && page.texts[op.text_id];
+      if (text && !text.locked) {
+        text.content = op.content || "";
+        if (Array.isArray(op.blocks)) text.blocks = op.blocks;
+        else text.blocks = [{ kind: "p", indent: 0, runs: [{ text: text.content }] }];
+      }
+    } else if (op.op === "set_text_style") {
+      const text = page.texts && page.texts[op.text_id];
+      if (text && !text.locked) {
+        if (op.font_size != null) text.font_size = op.font_size;
+        if (op.color != null) text.color = op.color;
+        if (op.bold != null) text.bold = !!op.bold;
+        if (op.italic != null) text.italic = !!op.italic;
+        if (editingTextId === op.text_id || selectedTextId === op.text_id) {
+          if (document.activeElement !== textSizeInput) {
+            loadTextStyleFromObject(text);
+          }
+          applyTextStyleToEditor();
+        }
+      }
+    } else if (op.op === "transform_text") {
+      const text = page.texts && page.texts[op.text_id];
+      if (text && !text.locked) {
+        text.x = op.x;
+        text.y = op.y;
+        text.width = op.width;
+        text.height = op.height;
+        if (op.font_size) text.font_size = op.font_size;
+      }
+    } else if (op.op === "erase_text") {
+      if (page.texts) delete page.texts[op.text_id];
+      if (page.text_order) {
+        page.text_order = page.text_order.filter((id) => id !== op.text_id);
+      }
+      if (selectedTextId === op.text_id) setSelectedText(null);
+      if (editingTextId === op.text_id) {
+        editingTextId = null;
+        if (textEditor) textEditor.hidden = true;
+      }
+    } else if (op.op === "set_text_lock") {
+      const text = page.texts && page.texts[op.text_id];
+      if (text) text.locked = !!op.locked;
     } else if (op.op === "add_stroke") {
       page.strokes[op.stroke_id] = {
         stroke_id: op.stroke_id,
@@ -2011,21 +3124,7 @@
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === "snapshot") {
-        documentState = msg.document;
-        const page =
-          documentState &&
-          documentState.pages &&
-          documentState.pages[documentState.active_page_id || "p0"];
-        if (page && page.background) {
-          applyPageBackground(page.background);
-        }
-        if (page && page.images) {
-          for (const iid of page.image_order || Object.keys(page.images)) {
-            const image = page.images[iid];
-            if (image && image.asset_id) ensureImageAsset(image.asset_id);
-          }
-        }
-        scheduleRedraw();
+        applySnapshotMessage(msg);
         return;
       }
       if (msg.type === "op" && msg.op) {
@@ -2078,6 +3177,16 @@
     const page = documentState && documentState.pages.p0;
     if (!page) return false;
     let hit = false;
+    const texts = page.text_order || [];
+    for (let i = texts.length - 1; i >= 0; i--) {
+      const tid = texts[i];
+      const text = page.texts && page.texts[tid];
+      if (!text) continue;
+      if (pointInImage(text, x, y)) {
+        queueSyncOp({ op: "erase_text", text_id: tid, page_id: "p0" });
+        return true;
+      }
+    }
     const images = page.image_order || [];
     for (let i = images.length - 1; i >= 0; i--) {
       const iid = images[i];
@@ -2333,13 +3442,38 @@
 
     if (ev.pointerType === "touch") return;
 
-    try {
-      canvas.setPointerCapture(ev.pointerId);
-    } catch (_) {}
-
     const p = pointerWorld(ev);
     eraserCursor =
       tool === "erase-stroke" || tool === "erase-partial" ? { x: p.x, y: p.y } : null;
+
+    // Text tool: drag to size a new box, or click existing to edit.
+    if (tool === "text") {
+      const hitText = hitTopTextAt(p.x, p.y);
+      if (hitText) {
+        setSelectedText(hitText);
+        pendingTextEdit = { textId: hitText, selectAll: false };
+        ev.preventDefault();
+        return;
+      }
+      try {
+        canvas.setPointerCapture(ev.pointerId);
+      } catch (_) {}
+      textCreateDrag = {
+        startX: p.x,
+        startY: p.y,
+        curX: p.x,
+        curY: p.y,
+        pointerId: ev.pointerId,
+      };
+      scheduleOverlay();
+      setStatus("drag to size text box");
+      ev.preventDefault();
+      return;
+    }
+
+    try {
+      canvas.setPointerCapture(ev.pointerId);
+    } catch (_) {}
 
     if (tool === "erase-stroke") {
       erasedStrokeIds.clear();
@@ -2355,17 +3489,75 @@
       return;
     }
 
-    // Pen tool: long-press to select; move/resize when selected (unless locked).
+    // Text tool handled above.
     if (tool === "pen") {
-      const selected = selectedImageId ? getImage(selectedImageId) : null;
-      if (selected) {
-        if (hitImageLockIcon(selected, p.x, p.y)) {
+      const selectedImg = selectedImageId ? getImage(selectedImageId) : null;
+      const selectedTxt = selectedTextId ? getText(selectedTextId) : null;
+
+      if (selectedTxt) {
+        if (hitImageLockIcon(selectedTxt, p.x, p.y)) {
+          toggleTextLock(selectedTextId);
+          ev.preventDefault();
+          return;
+        }
+        if (!selectedTxt.locked) {
+          const handle = hitImageHandle(selectedTxt, p.x, p.y);
+          if (handle) {
+            textGesture = {
+              mode: "resize",
+              textId: selectedTextId,
+              handle,
+              keepAspect: false,
+              startX: p.x,
+              startY: p.y,
+              orig: {
+                x: selectedTxt.x,
+                y: selectedTxt.y,
+                width: selectedTxt.width,
+                height: selectedTxt.height,
+              },
+            };
+            ev.preventDefault();
+            return;
+          }
+          if (pointInImage(selectedTxt, p.x, p.y)) {
+            if (ev.detail >= 2) {
+              try {
+                canvas.releasePointerCapture(ev.pointerId);
+              } catch (_) {}
+              pendingTextEdit = { textId: selectedTextId, selectAll: false };
+              ev.preventDefault();
+              return;
+            }
+            textGesture = {
+              mode: "move",
+              textId: selectedTextId,
+              startX: p.x,
+              startY: p.y,
+              orig: {
+                x: selectedTxt.x,
+                y: selectedTxt.y,
+                width: selectedTxt.width,
+                height: selectedTxt.height,
+              },
+            };
+            ev.preventDefault();
+            return;
+          }
+        } else if (pointInImage(selectedTxt, p.x, p.y)) {
+          ev.preventDefault();
+          return;
+        }
+      }
+
+      if (selectedImg) {
+        if (hitImageLockIcon(selectedImg, p.x, p.y)) {
           toggleImageLock(selectedImageId);
           ev.preventDefault();
           return;
         }
-        if (!selected.locked) {
-          const handle = hitImageHandle(selected, p.x, p.y);
+        if (!selectedImg.locked) {
+          const handle = hitImageHandle(selectedImg, p.x, p.y);
           if (handle) {
             imageGesture = {
               mode: "resize",
@@ -2375,36 +3567,61 @@
               startX: p.x,
               startY: p.y,
               orig: {
-                x: selected.x,
-                y: selected.y,
-                width: selected.width,
-                height: selected.height,
+                x: selectedImg.x,
+                y: selectedImg.y,
+                width: selectedImg.width,
+                height: selectedImg.height,
               },
             };
             ev.preventDefault();
             return;
           }
-          if (pointInImage(selected, p.x, p.y)) {
+          if (pointInImage(selectedImg, p.x, p.y)) {
             imageGesture = {
               mode: "move",
               imageId: selectedImageId,
               startX: p.x,
               startY: p.y,
               orig: {
-                x: selected.x,
-                y: selected.y,
-                width: selected.width,
-                height: selected.height,
+                x: selectedImg.x,
+                y: selectedImg.y,
+                width: selectedImg.width,
+                height: selectedImg.height,
               },
             };
             ev.preventDefault();
             return;
           }
-        } else if (pointInImage(selected, p.x, p.y)) {
-          // Locked: keep selection, ignore drag (still allow lock toggle above).
+        } else if (pointInImage(selectedImg, p.x, p.y)) {
           ev.preventDefault();
           return;
         }
+      }
+
+      const hitTextId = hitTopTextAt(p.x, p.y);
+      if (hitTextId) {
+        const screen = pointerScreen(ev);
+        clearImagePress();
+        textPress = {
+          textId: hitTextId,
+          startX: p.x,
+          startY: p.y,
+          sx: screen.sx,
+          sy: screen.sy,
+          pointerId: ev.pointerId,
+          t: p.t,
+          pressure: p.pressure,
+          armed: false,
+        };
+        textPress.timer = setTimeout(() => {
+          if (!textPress || textPress.pointerId !== ev.pointerId) return;
+          textPress.armed = true;
+          setSelectedText(textPress.textId);
+          setStatus("text selected");
+          scheduleOverlay();
+        }, LONG_PRESS_MS);
+        ev.preventDefault();
+        return;
       }
 
       const hitId = hitTopImageAt(p.x, p.y);
@@ -2433,6 +3650,7 @@
         return;
       }
       if (selectedImageId) setSelectedImage(null);
+      if (selectedTextId) setSelectedText(null);
     }
 
     beginStrokeAt(p);
@@ -2506,6 +3724,55 @@
       }
     }
 
+    if (textPress && textPress.pointerId === ev.pointerId) {
+      const screen = pointerScreen(ev);
+      const moved = Math.hypot(screen.sx - textPress.sx, screen.sy - textPress.sy);
+      if (moved > LONG_PRESS_MOVE_PX) {
+        const start = {
+          x: textPress.startX,
+          y: textPress.startY,
+          t: textPress.t,
+          pressure: textPress.pressure,
+        };
+        clearTextPress();
+        beginStrokeAt(start);
+      } else {
+        ev.preventDefault();
+        return;
+      }
+    }
+
+    if (textCreateDrag && textCreateDrag.pointerId === ev.pointerId) {
+      textCreateDrag.curX = p.x;
+      textCreateDrag.curY = p.y;
+      scheduleOverlay();
+      ev.preventDefault();
+      return;
+    }
+
+    if (textGesture) {
+      const dx = p.x - textGesture.startX;
+      const dy = p.y - textGesture.startY;
+      const orig = textGesture.orig;
+      let box;
+      if (textGesture.mode === "resize") {
+        // Box is a window: geometry only — never scale font with the frame.
+        box = resizeFromHandle(orig, textGesture.handle, dx, dy, false);
+      } else {
+        box = {
+          x: orig.x + dx,
+          y: orig.y + dy,
+          width: orig.width,
+          height: orig.height,
+        };
+      }
+      applyTextBoxLocal(textGesture.textId, box);
+      scheduleRedraw();
+      scheduleOverlay();
+      ev.preventDefault();
+      return;
+    }
+
     if (imageGesture) {
       const dx = p.x - imageGesture.startX;
       const dy = p.y - imageGesture.startY;
@@ -2574,6 +3841,35 @@
     pointers.delete(ev.pointerId);
     if (pointers.size < 2) pinch = null;
 
+    if (textCreateDrag && textCreateDrag.pointerId === ev.pointerId) {
+      try {
+        canvas.releasePointerCapture(ev.pointerId);
+      } catch (_) {}
+      const textId = finishTextCreateDrag();
+      if (textId) {
+        pendingTextEdit = { textId, selectAll: true };
+        requestAnimationFrame(() => {
+          openTextEditor(textId, true);
+          pendingTextEdit = null;
+        });
+      }
+      ev.preventDefault();
+      return;
+    }
+
+    if (pendingTextEdit) {
+      const pending = pendingTextEdit;
+      pendingTextEdit = null;
+      try {
+        canvas.releasePointerCapture(ev.pointerId);
+      } catch (_) {}
+      requestAnimationFrame(() => {
+        openTextEditor(pending.textId, pending.selectAll);
+      });
+      ev.preventDefault();
+      return;
+    }
+
     if (imageGesture) {
       const imageId = imageGesture.imageId;
       imageGesture = null;
@@ -2584,10 +3880,28 @@
       return;
     }
 
+    if (textGesture) {
+      const textId = textGesture.textId;
+      textGesture = null;
+      commitTextTransform(textId);
+      scheduleOverlay();
+      updateCursor();
+      ev.preventDefault();
+      return;
+    }
+
     if (imagePress && imagePress.pointerId === ev.pointerId) {
       const wasArmed = imagePress.armed;
       clearImagePress();
       if (wasArmed) setStatus("image selected");
+      ev.preventDefault();
+      return;
+    }
+
+    if (textPress && textPress.pointerId === ev.pointerId) {
+      const wasArmed = textPress.armed;
+      clearTextPress();
+      if (wasArmed) setStatus("text selected");
       ev.preventDefault();
       return;
     }
@@ -2642,33 +3956,73 @@
   );
 
   window.addEventListener("keydown", (ev) => {
+    if (
+      isTypingInTextEditor() ||
+      (textEditor && document.activeElement === textEditor) ||
+      (ev.target &&
+        (ev.target.tagName === "TEXTAREA" ||
+          ev.target.tagName === "INPUT" ||
+          ev.target.isContentEditable))
+    ) {
+      if (ev.key === "Escape" && editingTextId) {
+        commitTextEditor();
+        ev.preventDefault();
+      }
+      return;
+    }
     if (ev.code === "Space" && !ev.repeat) {
       spaceHeld = true;
       updateCursor();
       ev.preventDefault();
     }
     if (ev.key === "Escape") {
+      if (editingTextId) {
+        commitTextEditor();
+        ev.preventDefault();
+        return;
+      }
+      if (textCreateDrag) {
+        textCreateDrag = null;
+        scheduleOverlay();
+        setStatus("text create cancelled");
+        ev.preventDefault();
+        return;
+      }
       if (imageGesture) imageGesture = null;
+      if (textGesture) textGesture = null;
       if (selectedImageId) {
         setSelectedImage(null);
+        ev.preventDefault();
+      }
+      if (selectedTextId) {
+        setSelectedText(null);
         ev.preventDefault();
       }
     }
     if (
       (ev.key === "Delete" || ev.key === "Backspace") &&
-      selectedImageId &&
       !ev.ctrlKey &&
       !ev.metaKey
     ) {
-      const imageId = selectedImageId;
-      sendOp({ op: "erase_image", image_id: imageId, page_id: "p0" });
-      setSelectedImage(null);
-      ev.preventDefault();
+      if (selectedTextId) {
+        const textId = selectedTextId;
+        sendOp({ op: "erase_text", text_id: textId, page_id: "p0" });
+        setSelectedText(null);
+        ev.preventDefault();
+        return;
+      }
+      if (selectedImageId) {
+        const imageId = selectedImageId;
+        sendOp({ op: "erase_image", image_id: imageId, page_id: "p0" });
+        setSelectedImage(null);
+        ev.preventDefault();
+      }
     }
     if (ev.key === "e" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
       setTool(tool === "erase-stroke" ? "erase-partial" : "erase-stroke");
     }
     if (ev.key === "b" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) setTool("pen");
+    if (ev.key === "t" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) setTool("text");
     if (ev.key === "p" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
       Perf.setHud(!Perf.hud);
     }
@@ -2687,6 +4041,13 @@
   });
 
   window.addEventListener("keyup", (ev) => {
+    if (
+      textEditor &&
+      (document.activeElement === textEditor ||
+        (ev.target && (ev.target.tagName === "TEXTAREA" || ev.target.tagName === "INPUT")))
+    ) {
+      return;
+    }
     if (ev.code === "Space") {
       spaceHeld = false;
       updateCursor();
@@ -2721,6 +4082,32 @@
   }
 
   document.getElementById("btn-export").onclick = () => toggleExportDock();
+  const btnSessions = document.getElementById("btn-sessions");
+  if (btnSessions) btnSessions.onclick = () => toggleSessionsDock();
+  const btnSessionSave = document.getElementById("btn-session-save");
+  const btnSessionNew = document.getElementById("btn-session-new");
+  if (btnSessionSave) {
+    btnSessionSave.onclick = () => {
+      saveSessionNow().catch((err) => setStatus(String(err.message || err)));
+    };
+  }
+  if (btnSessionNew) {
+    btnSessionNew.onclick = () => {
+      newSession().catch((err) => setStatus(String(err.message || err)));
+    };
+  }
+  if (sessionTitleInput) {
+    sessionTitleInput.addEventListener("change", () => {
+      renameActiveSession().catch((err) => setStatus(String(err.message || err)));
+    });
+    sessionTitleInput.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        sessionTitleInput.blur();
+        ev.preventDefault();
+      }
+      ev.stopPropagation();
+    });
+  }
   document.getElementById("btn-export-png").onclick = () => exportViewportPng();
   document.getElementById("btn-export-svg").onclick = () => {
     exportFromApi("/api/export/svg", `apesketch-${Date.now()}.svg`)
@@ -2734,7 +4121,56 @@
   };
   if (btnRecord) btnRecord.onclick = () => toggleRecording();
 
+  if (textEditor) {
+    textEditor.addEventListener("pointerdown", (ev) => {
+      ev.stopPropagation();
+    });
+    textEditor.addEventListener("mousedown", (ev) => {
+      ev.stopPropagation();
+    });
+    textEditor.addEventListener("blur", () => {
+      if (ignoreTextEditorBlur) return;
+      setTimeout(() => {
+        if (ignoreTextEditorBlur) return;
+        if (document.activeElement === textEditor || textEditor.contains(document.activeElement)) {
+          return;
+        }
+        // Don't commit if focus moved to text dock controls.
+        const active = document.activeElement;
+        if (active && dockText && dockText.contains(active)) {
+          ignoreTextEditorBlur = true;
+          textEditor.focus({ preventScroll: true });
+          ignoreTextEditorBlur = false;
+          return;
+        }
+        commitTextEditor();
+      }, 0);
+    });
+    textEditor.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") {
+        commitTextEditor();
+        ev.preventDefault();
+      }
+      if (ev.key === "Tab") {
+        ev.preventDefault();
+        document.execCommand(ev.shiftKey ? "outdent" : "indent");
+      }
+      if ((ev.ctrlKey || ev.metaKey) && (ev.key === "b" || ev.key === "B")) {
+        document.execCommand("bold");
+        ev.preventDefault();
+      }
+      if ((ev.ctrlKey || ev.metaKey) && (ev.key === "i" || ev.key === "I")) {
+        document.execCommand("italic");
+        ev.preventDefault();
+      }
+      ev.stopPropagation();
+    });
+    textEditor.addEventListener("keyup", (ev) => ev.stopPropagation());
+    textEditor.addEventListener("keypress", (ev) => ev.stopPropagation());
+  }
+
   window.addEventListener("paste", (ev) => {
+    if (isTypingInTextEditor()) return;
     const clip = ev.clipboardData;
     if (!clip) return;
     const images = [];
@@ -2812,6 +4248,87 @@
     setTool("pen");
     toggleStyleDock();
   };
+  if (btnText) {
+    btnText.onclick = () => setTool("text");
+    btnText.ondblclick = (ev) => {
+      ev.preventDefault();
+      setTool("text");
+      toggleTextDock();
+    };
+  }
+  if (textSizeInput) {
+    textSizeInput.oninput = () => {
+      const next = Math.max(12, Math.min(96, Number(textSizeInput.value) || DEFAULT_TEXT_FONT));
+      // Preview only while dragging — no network ops / DOM rewrites per tick.
+      textFontSize = next;
+      if (textSizeLabel) textSizeLabel.textContent = String(Math.round(next));
+      if (editingTextId && textEditor && !textEditor.hidden && !editorHasSelection()) {
+        textEditor.style.fontSize = `${Math.max(12, next * view.scale)}px`;
+      }
+    };
+    textSizeInput.onchange = () => {
+      const next = Math.max(12, Math.min(96, Number(textSizeInput.value) || DEFAULT_TEXT_FONT));
+      commitTextFontSize(next);
+    };
+  }
+  if (btnTextBold) {
+    btnTextBold.onclick = () => {
+      if (editingTextId) {
+        document.execCommand("bold");
+        textEditor && textEditor.focus();
+        return;
+      }
+      const id = styledTextTargetId();
+      const text = id ? getText(id) : null;
+      pushTextStyle({ bold: text ? !text.bold : !textBold });
+      syncTextStyleControls();
+    };
+  }
+  if (btnTextItalic) {
+    btnTextItalic.onclick = () => {
+      if (editingTextId) {
+        document.execCommand("italic");
+        textEditor && textEditor.focus();
+        return;
+      }
+      const id = styledTextTargetId();
+      const text = id ? getText(id) : null;
+      pushTextStyle({ italic: text ? !text.italic : !textItalic });
+      syncTextStyleControls();
+    };
+  }
+  if (btnTextBullet) {
+    btnTextBullet.onclick = () => {
+      if (!editingTextId) setStatus("edit text to use lists");
+      else {
+        document.execCommand("insertUnorderedList");
+        textEditor.focus();
+      }
+    };
+  }
+  if (btnTextNumber) {
+    btnTextNumber.onclick = () => {
+      if (!editingTextId) setStatus("edit text to use lists");
+      else {
+        document.execCommand("insertOrderedList");
+        textEditor.focus();
+      }
+    };
+  }
+  if (btnTextIndent) {
+    btnTextIndent.onclick = () => {
+      if (!editingTextId) return;
+      document.execCommand("indent");
+      textEditor.focus();
+    };
+  }
+  if (btnTextOutdent) {
+    btnTextOutdent.onclick = () => {
+      if (!editingTextId) return;
+      document.execCommand("outdent");
+      textEditor.focus();
+    };
+  }
   btnEraseStroke.onclick = () => setTool("erase-stroke");
   btnEraseStroke.ondblclick = (ev) => {
     ev.preventDefault();
@@ -2869,10 +4386,12 @@
   syncColorButtons();
   syncBgButtons();
   syncSizeControls();
+  syncTextStyleControls();
   applyChromeTheme(pageBackground);
   Perf.start();
   loadPair()
     .then(connectWs)
+    .then(() => refreshSessions().catch(() => {}))
     .catch((err) => setStatus(String(err)));
 
   /**

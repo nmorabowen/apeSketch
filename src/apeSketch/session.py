@@ -35,12 +35,28 @@ class SketchSession:
         self.room_code = _room_code()
         self.token = secrets.token_urlsafe(16)
         self._listeners: list[Listener] = []
+        self._change_listeners: list[Listener] = []
+        self.session_id: str | None = None
+        self.session_title: str = "Untitled"
 
     def subscribe(self, listener: Listener) -> None:
         self._listeners.append(listener)
 
     def unsubscribe(self, listener: Listener) -> None:
         self._listeners = [item for item in self._listeners if item is not listener]
+
+    def on_change(self, listener: Listener) -> None:
+        """Notify after the document mutates (for autosave, etc.)."""
+        self._change_listeners.append(listener)
+
+    def _notify_change(self) -> None:
+        message = {
+            "type": "change",
+            "rev": self.document.revision,
+            "session_id": self.session_id,
+        }
+        for listener in list(self._change_listeners):
+            listener(message)
 
     def apply(self, op: Op, *, exclude: Listener | None = None) -> dict[str, Any]:
         self.document.apply(op)
@@ -53,6 +69,7 @@ class SketchSession:
             if exclude is not None and listener is exclude:
                 continue
             listener(message)
+        self._notify_change()
         return message
 
     def apply_dict(
@@ -85,6 +102,7 @@ class SketchSession:
                 if exclude is not None and listener is exclude:
                     continue
                 listener(message)
+        self._notify_change()
         return {
             "type": "ops",
             "rev": self.document.revision,
@@ -92,11 +110,40 @@ class SketchSession:
         }
 
     def snapshot_message(self) -> dict[str, Any]:
-        return {
+        message: dict[str, Any] = {
             "type": "snapshot",
             "rev": self.document.revision,
             "document": self.document.to_dict(),
         }
+        if self.session_id is not None:
+            message["session"] = {
+                "id": self.session_id,
+                "title": self.session_title,
+            }
+        return message
+
+    def broadcast_snapshot(self) -> dict[str, Any]:
+        message = self.snapshot_message()
+        for listener in list(self._listeners):
+            listener(message)
+        return message
+
+    def replace_document(
+        self,
+        document: Document,
+        *,
+        session_id: str | None = None,
+        session_title: str = "Untitled",
+    ) -> dict[str, Any]:
+        """Swap the live Document and push a full snapshot to clients."""
+        self.document = document
+        self.session_id = session_id
+        self.session_title = session_title.strip() or "Untitled"
+        return self.broadcast_snapshot()
+
+    def bind_session(self, session_id: str | None, title: str = "Untitled") -> None:
+        self.session_id = session_id
+        self.session_title = title.strip() or "Untitled"
 
     def pair_info(self, *, host: str, port: int, scheme: str = "ws") -> dict[str, Any]:
         ws_url = f"{scheme}://{host}:{port}/ws?room={self.room_code}&token={self.token}"
