@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>apeSketch pair</title>
+  <style>
+    body {
+      margin: 0;
+      font: 16px/1.45 "Segoe UI", system-ui, sans-serif;
+      background: #f4f2ec;
+      color: #1a1a1a;
+      padding: 24px;
+    }
+    code, pre {
+      background: #fff;
+      border: 1px solid #cfcabe;
+      border-radius: 4px;
+    }
+    code { padding: 2px 6px; }
+    pre { padding: 12px; overflow: auto; }
+    #qr {
+      width: 220px;
+      height: 220px;
+      background: #fff;
+      border: 1px solid #cfcabe;
+      display: grid;
+      place-items: center;
+      margin: 16px 0;
+      color: #666;
+      font-size: 13px;
+      text-align: center;
+      padding: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>apeSketch pair</h1>
+  <p>Join this Session from another device on the same Wi‑Fi (or hotspot).</p>
+  <p>Room: <code id="room">…</code></p>
+  <p>Board: <a id="board" href="#">…</a></p>
+  <p>WebSocket: <code id="ws">…</code></p>
+  <div id="qr">Open the board URL on your phone.<br/>QR encoding can be added later.</div>
+  <pre id="raw"></pre>
+  <script>
+    fetch("/api/pair")
+      .then((r) => r.json())
+      .then((info) => {
+        document.getElementById("room").textContent = info.room;
+        const board = document.getElementById("board");
+        board.href = info.board;
+        board.textContent = info.board;
+        document.getElementById("ws").textContent = info.ws;
+        document.getElementById("raw").textContent = JSON.stringify(info, null, 2);
+        document.getElementById("qr").textContent =
+          "On your phone, open:\n" + info.board + "\nRoom " + info.room;
+      });
+  </script>
+</body>
+</html>

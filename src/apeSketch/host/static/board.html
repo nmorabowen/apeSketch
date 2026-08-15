@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>apeSketch</title>
+  <style>
+    :root {
+      --bg: #f4f2ec;
+      --ink: #1a1a1a;
+      --line: #cfcabe;
+      --accent: #2f5d50;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
+      overflow: hidden;
+      touch-action: none;
+    }
+    #bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+    #bar button {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 6px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    #bar button:hover { border-color: var(--accent); }
+    #status { margin-left: auto; color: #666; font-size: 12px; }
+    #board {
+      display: block;
+      width: 100%;
+      height: calc(100% - 45px);
+      background: #fafaf7;
+      cursor: crosshair;
+      touch-action: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="bar">
+    <strong>apeSketch</strong>
+    <button type="button" id="btn-clear">Clear</button>
+    <button type="button" id="btn-undo">Undo stroke</button>
+    <button type="button" id="btn-pair">Pair</button>
+    <span id="status">connecting…</span>
+  </div>
+  <canvas id="board"></canvas>
+  <script src="/board.js"></script>
+</body>
+</html>
