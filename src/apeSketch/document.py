@@ -12,21 +12,35 @@ from apeSketch.ops import (
     UNITS,
     AddImage,
     AddStroke,
+    AddText,
     AppendPoints,
     BeginStroke,
     ClearPage,
     EndStroke,
     EraseImage,
     EraseStroke,
+    EraseText,
     Op,
     ReplaceStrokePoints,
     SetBackground,
-    TransformImage,
     SetImageLock,
+    SetTextContent,
+    SetTextLock,
+    SetTextStyle,
+    TransformImage,
+    TransformText,
     op_from_dict,
     op_to_dict,
 )
-from apeSketch.types import ImageObject, Page, Stroke, StrokeStyle
+from apeSketch.types import (
+    ImageObject,
+    Page,
+    Stroke,
+    StrokeStyle,
+    TextObject,
+    flatten_blocks,
+    parse_blocks,
+)
 
 
 class Document:
@@ -90,6 +104,18 @@ class Document:
             self._transform_image(op)
         elif isinstance(op, SetImageLock):
             self._set_image_lock(op)
+        elif isinstance(op, AddText):
+            self._add_text(op)
+        elif isinstance(op, SetTextContent):
+            self._set_text_content(op)
+        elif isinstance(op, SetTextStyle):
+            self._set_text_style(op)
+        elif isinstance(op, TransformText):
+            self._transform_text(op)
+        elif isinstance(op, EraseText):
+            self._erase_text(op)
+        elif isinstance(op, SetTextLock):
+            self._set_text_lock(op)
         else:
             raise DocumentError(f"unknown op type {type(op)!r}")
         if record:
@@ -174,6 +200,8 @@ class Document:
         page.stroke_order.clear()
         page.images.clear()
         page.image_order.clear()
+        page.texts.clear()
+        page.text_order.clear()
 
     def _set_background(self, op: SetBackground) -> None:
         page = self._ensure_page(op.page_id)
@@ -220,6 +248,96 @@ class Document:
         if image is None:
             raise DocumentError(f"unknown image {op.image_id!r}")
         image.locked = op.locked
+
+    def _add_text(self, op: AddText) -> None:
+        page = self._ensure_page(op.page_id)
+        if op.text_id in page.texts:
+            raise DocumentError(f"text {op.text_id!r} already exists")
+        try:
+            blocks = parse_blocks(
+                list(op.blocks) if op.blocks is not None else None,
+                content=op.content,
+            )
+        except ValueError as exc:
+            raise DocumentError(str(exc)) from exc
+        content = op.content if op.content else flatten_blocks(blocks)
+        page.texts[op.text_id] = TextObject(
+            text_id=op.text_id,
+            content=content,
+            x=op.x,
+            y=op.y,
+            width=op.width,
+            height=op.height,
+            font_size=op.font_size,
+            color=op.color,
+            bold=op.bold,
+            italic=op.italic,
+            author=op.author,
+            layer=op.layer,
+            blocks=blocks,
+        )
+        page.text_order.append(op.text_id)
+
+    def _set_text_content(self, op: SetTextContent) -> None:
+        page = self._ensure_page(op.page_id)
+        text = page.texts.get(op.text_id)
+        if text is None:
+            raise DocumentError(f"unknown text {op.text_id!r}")
+        if text.locked:
+            raise DocumentError(f"text {op.text_id!r} is locked")
+        try:
+            blocks = parse_blocks(
+                list(op.blocks) if op.blocks is not None else None,
+                content=op.content,
+            )
+        except ValueError as exc:
+            raise DocumentError(str(exc)) from exc
+        text.blocks = blocks
+        text.content = op.content if op.content else flatten_blocks(blocks)
+
+    def _set_text_style(self, op: SetTextStyle) -> None:
+        page = self._ensure_page(op.page_id)
+        text = page.texts.get(op.text_id)
+        if text is None:
+            raise DocumentError(f"unknown text {op.text_id!r}")
+        if text.locked:
+            raise DocumentError(f"text {op.text_id!r} is locked")
+        if op.font_size is not None:
+            text.font_size = op.font_size
+        if op.color is not None:
+            text.color = op.color
+        if op.bold is not None:
+            text.bold = op.bold
+        if op.italic is not None:
+            text.italic = op.italic
+
+    def _transform_text(self, op: TransformText) -> None:
+        page = self._ensure_page(op.page_id)
+        text = page.texts.get(op.text_id)
+        if text is None:
+            raise DocumentError(f"unknown text {op.text_id!r}")
+        if text.locked:
+            raise DocumentError(f"text {op.text_id!r} is locked")
+        text.x = op.x
+        text.y = op.y
+        text.width = op.width
+        text.height = op.height
+        if op.font_size is not None:
+            text.font_size = op.font_size
+
+    def _erase_text(self, op: EraseText) -> None:
+        page = self._ensure_page(op.page_id)
+        if op.text_id not in page.texts:
+            raise DocumentError(f"unknown text {op.text_id!r}")
+        del page.texts[op.text_id]
+        page.text_order = [tid for tid in page.text_order if tid != op.text_id]
+
+    def _set_text_lock(self, op: SetTextLock) -> None:
+        page = self._ensure_page(op.page_id)
+        text = page.texts.get(op.text_id)
+        if text is None:
+            raise DocumentError(f"unknown text {op.text_id!r}")
+        text.locked = op.locked
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -329,6 +447,9 @@ class Document:
         for image in page.images.values():
             xs.extend([image.x, image.x + image.width])
             ys.extend([image.y, image.y + image.height])
+        for text in page.texts.values():
+            xs.extend([text.x, text.x + text.width])
+            ys.extend([text.y, text.y + text.height])
         if not xs:
             return None
         return {
@@ -337,6 +458,15 @@ class Document:
             "max_x": max(xs),
             "max_y": max(ys),
         }
+
+    @staticmethod
+    def _xml_escape(value: str) -> str:
+        return (
+            value.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
 
     @staticmethod
     def _page_to_svg(page: Page, *, assets: Any | None = None) -> str:
@@ -360,6 +490,56 @@ class Document:
                 f'width="{image.width:.2f}" height="{image.height:.2f}" '
                 f'preserveAspectRatio="none"/>'
             )
+        for tid in page.text_order:
+            text = page.texts.get(tid)
+            if text is None:
+                continue
+            blocks = text.blocks or parse_blocks(None, content=text.content)
+            y_cursor = text.y + 4.0
+            ol_counters: dict[int, int] = {}
+            for block in blocks:
+                indent_px = 18.0 * block.indent
+                marker = ""
+                if block.kind == "ul":
+                    marker = "•"
+                elif block.kind == "ol":
+                    ol_counters[block.indent] = ol_counters.get(block.indent, 0) + 1
+                    for deeper in [k for k in ol_counters if k > block.indent]:
+                        del ol_counters[deeper]
+                    marker = f"{ol_counters[block.indent]}."
+                marker_w = 16.0 if marker else 0.0
+                x0 = text.x + 4.0 + indent_px + marker_w
+                # Simple single-line SVG rows per block (wrapped content as one tspan chain).
+                default_size = text.font_size
+                line_h = default_size * 1.25
+                if marker:
+                    parts.append(
+                        f'<text data-text-id="{text.text_id}" x="{text.x + 4 + indent_px:.2f}" '
+                        f'y="{y_cursor + default_size * 0.85:.2f}" fill="{text.color}" '
+                        f'font-size="{default_size * 0.9:.2f}" '
+                        f'font-family="Segoe UI, system-ui, sans-serif">'
+                        f"{Document._xml_escape(marker)}</text>"
+                    )
+                x_run = x0
+                for run in block.runs:
+                    fs = run.font_size if run.font_size is not None else default_size
+                    bold = text.bold if run.bold is None else run.bold
+                    italic = text.italic if run.italic is None else run.italic
+                    color = run.color if run.color is not None else text.color
+                    parts.append(
+                        f'<text data-text-id="{text.text_id}" x="{x_run:.2f}" '
+                        f'y="{y_cursor + fs * 0.85:.2f}" fill="{color}" '
+                        f'font-size="{fs:.2f}" '
+                        f'font-weight="{"700" if bold else "400"}" '
+                        f'font-style="{"italic" if italic else "normal"}" '
+                        f'font-family="Segoe UI, system-ui, sans-serif">'
+                        f"{Document._xml_escape(run.text)}</text>"
+                    )
+                    # Approximate advance for SVG (not exact); fine for export snapshot.
+                    x_run += len(run.text) * fs * 0.55
+                y_cursor += line_h
+                if y_cursor > text.y + text.height:
+                    break
         for sid in page.stroke_order:
             stroke = page.strokes[sid]
             if len(stroke.points) == 0:
