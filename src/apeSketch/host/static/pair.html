@@ -5,56 +5,258 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>apeSketch pair</title>
   <style>
+    :root {
+      --bg: #f4f2ec;
+      --ink: #1a1a1a;
+      --line: #cfcabe;
+      --accent: #2f5d50;
+      --card: #fff;
+    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
+      min-height: 100vh;
       font: 16px/1.45 "Segoe UI", system-ui, sans-serif;
-      background: #f4f2ec;
-      color: #1a1a1a;
-      padding: 24px;
-    }
-    code, pre {
-      background: #fff;
-      border: 1px solid #cfcabe;
-      border-radius: 4px;
-    }
-    code { padding: 2px 6px; }
-    pre { padding: 12px; overflow: auto; }
-    #qr {
-      width: 220px;
-      height: 220px;
-      background: #fff;
-      border: 1px solid #cfcabe;
+      background: var(--bg);
+      color: var(--ink);
       display: grid;
       place-items: center;
-      margin: 16px 0;
+      padding: 24px;
+    }
+    main {
+      width: min(440px, 100%);
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 28px 24px 24px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 1.35rem;
+      font-weight: 650;
+    }
+    .lead {
+      margin: 0 0 20px;
+      color: #555;
+      font-size: 0.95rem;
+    }
+    .room {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .room-label {
+      font-size: 0.8rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
       color: #666;
-      font-size: 13px;
+    }
+    .room-code {
+      font: 700 1.75rem/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+    }
+    .qr-wrap {
+      display: grid;
+      place-items: center;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fafaf7;
+      margin-bottom: 16px;
+      min-height: 280px;
+    }
+    .qr-wrap img {
+      width: 240px;
+      height: 240px;
+      image-rendering: pixelated;
+    }
+    .qr-wrap .err {
+      color: #8a3b2b;
       text-align: center;
+      font-size: 0.9rem;
       padding: 12px;
+    }
+    .meta {
+      font-size: 0.9rem;
+      color: #444;
+      word-break: break-all;
+    }
+    .meta a { color: var(--accent); }
+    .top-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .back {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      color: var(--ink);
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+    .back:hover { border-color: var(--accent); color: var(--accent); }
+    .back svg {
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+    }
+    button, .btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font: inherit;
+      text-decoration: none;
+    }
+    button:hover, .btn:hover { border-color: var(--accent); }
+    details {
+      margin-top: 18px;
+      color: #666;
+      font-size: 0.85rem;
+    }
+    pre {
+      margin: 8px 0 0;
+      padding: 10px;
+      background: #f7f5ef;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      overflow: auto;
+      font-size: 0.75rem;
     }
   </style>
 </head>
 <body>
-  <h1>apeSketch pair</h1>
-  <p>Join this Session from another device on the same Wi‑Fi (or hotspot).</p>
-  <p>Room: <code id="room">…</code></p>
-  <p>Board: <a id="board" href="#">…</a></p>
-  <p>WebSocket: <code id="ws">…</code></p>
-  <div id="qr">Open the board URL on your phone.<br/>QR encoding can be added later.</div>
-  <pre id="raw"></pre>
+  <main>
+    <div class="top-bar">
+      <a class="back" id="back-board" href="/" title="Back to board" aria-label="Back to board">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/><path d="M9 12h11"/></svg>
+      </a>
+      <h1 style="margin:0">apeSketch pair</h1>
+    </div>
+    <p class="lead">Scan with your phone (same Wi‑Fi or hotspot) to open this board.</p>
+    <div class="room">
+      <span class="room-label">Room</span>
+      <span class="room-code" id="room">…</span>
+    </div>
+    <div class="qr-wrap" id="qr-wrap">
+      <span class="err">Loading QR…</span>
+    </div>
+    <div class="meta">
+      Board: <a id="board" href="#">…</a>
+    </div>
+    <div class="actions">
+      <a class="btn" id="open-board" href="#">Open board</a>
+      <button type="button" id="copy-url">Copy URL</button>
+      <button type="button" id="refresh-qr">Refresh QR</button>
+    </div>
+    <details>
+      <summary>Technical details</summary>
+      <p>WebSocket: <code id="ws">…</code></p>
+      <pre id="raw"></pre>
+    </details>
+  </main>
   <script>
-    fetch("/api/pair")
-      .then((r) => r.json())
-      .then((info) => {
-        document.getElementById("room").textContent = info.room;
-        const board = document.getElementById("board");
-        board.href = info.board;
-        board.textContent = info.board;
-        document.getElementById("ws").textContent = info.ws;
-        document.getElementById("raw").textContent = JSON.stringify(info, null, 2);
-        document.getElementById("qr").textContent =
-          "On your phone, open:\n" + info.board + "\nRoom " + info.room;
-      });
+    const qrWrap = document.getElementById("qr-wrap");
+    const roomEl = document.getElementById("room");
+    const boardEl = document.getElementById("board");
+    const openBoard = document.getElementById("open-board");
+    const wsEl = document.getElementById("ws");
+    const rawEl = document.getElementById("raw");
+
+    function showQr(boardUrl) {
+      fetch("/api/pair/qr.svg?t=" + Date.now())
+        .then(async (res) => {
+          if (!res.ok) {
+            const body = await res.text();
+            throw new Error(body || ("HTTP " + res.status));
+          }
+          return res.text();
+        })
+        .then((svg) => {
+          qrWrap.innerHTML = svg;
+          const el = qrWrap.querySelector("svg");
+          if (el) {
+            el.setAttribute("width", "240");
+            el.setAttribute("height", "240");
+            el.style.display = "block";
+          }
+        })
+        .catch((err) => {
+          qrWrap.innerHTML =
+            '<div class="err">QR unavailable (' +
+            String(err).slice(0, 180) +
+            "). Open this URL on your phone:<br/><br/><strong>" +
+            boardUrl +
+            "</strong><br/><br/>If this host was started before QR support, restart:<br/><code>python -m apeSketch</code></div>";
+        });
+    }
+
+    function loadPair() {
+      return fetch("/api/pair")
+        .then((r) => r.json())
+        .then((info) => {
+          roomEl.textContent = info.room;
+          boardEl.href = info.board;
+          boardEl.textContent = info.board;
+          openBoard.href = info.board;
+          wsEl.textContent = info.ws;
+          rawEl.textContent = JSON.stringify(info, null, 2);
+          showQr(info.board);
+          return info;
+        });
+    }
+
+    document.getElementById("copy-url").onclick = async () => {
+      const url = boardEl.href;
+      try {
+        await navigator.clipboard.writeText(url);
+        document.getElementById("copy-url").textContent = "Copied";
+        setTimeout(() => {
+          document.getElementById("copy-url").textContent = "Copy URL";
+        }, 1200);
+      } catch (_) {
+        prompt("Copy board URL", url);
+      }
+    };
+
+    document.getElementById("refresh-qr").onclick = () => loadPair();
+    document.getElementById("back-board").onclick = (ev) => {
+      // Prefer returning to the opener tab when Pair was opened from the board.
+      if (window.opener && !window.opener.closed) {
+        ev.preventDefault();
+        window.opener.focus();
+        window.close();
+        return;
+      }
+      if (history.length > 1) {
+        ev.preventDefault();
+        history.back();
+      }
+    };
+    loadPair().catch((err) => {
+      qrWrap.innerHTML = '<div class="err">' + String(err) + "</div>";
+    });
   </script>
 </body>
 </html>

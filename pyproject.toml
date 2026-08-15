@@ -35,6 +35,7 @@ dev = [
 ]
 host = [
     "websockets>=12",
+    "segno>=1.6",
 ]
 
 [project.urls]

@@ -22,6 +22,29 @@ def test_session_broadcasts_ops() -> None:
     assert len(session.document.strokes()) == 1
 
 
+def test_session_apply_many_dicts() -> None:
+    session = SketchSession()
+    seen: list[dict] = []
+    session.subscribe(seen.append)
+    message = session.apply_many_dicts(
+        [
+            {"op": "begin_stroke", "stroke_id": "b1", "author": "a"},
+            {
+                "op": "append_points",
+                "stroke_id": "b1",
+                "points": [[1, 1, 0, 0.5], [4, 5, 10, 0.5]],
+            },
+            {"op": "end_stroke", "stroke_id": "b1"},
+        ]
+    )
+    assert message["type"] == "ops"
+    assert len(message["ops"]) == 3
+    # Fan-out as individual op messages so older clients stay in sync.
+    assert len(seen) == 3
+    assert all(item["type"] == "op" for item in seen)
+    assert len(session.document.strokes()) == 1
+
+
 def test_pair_and_authorize() -> None:
     session = SketchSession()
     info = session.pair_info(host="192.168.1.10", port=9967)

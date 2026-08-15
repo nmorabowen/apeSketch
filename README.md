@@ -20,14 +20,26 @@ This repository is **private**. Status: pre-alpha — architecture under
 
 ## Quick start
 
-```bash
+Canonical Python env (shared OpenSees toolchain venv):
+
+```powershell
+# Windows — use opensees_env (folder name under C:\Users\nmb\venv)
+C:\Users\nmb\venv\opensees_env\Scripts\Activate.ps1
 cd apeSketch
-python -m venv .venv
-# Windows: .venv\Scripts\activate
 pip install -e ".[dev,host]"
 pytest
 python -m apeSketch
 ```
+
+Or without activating:
+
+```powershell
+C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m pip install -e ".[dev,host]"
+C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m pytest
+C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m apeSketch
+```
+
+Do **not** rely on apeSketch’s local `.venv` for day-to-day work; keep deps in `opensees_env`.
 
 Opens a board on port **9966** (HTTP) with WebSocket on **9967**
 (apeCAD uses 8765 — these stay separate). Pair page: `/pair`. Phone on

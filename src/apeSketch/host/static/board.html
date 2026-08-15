@@ -6,58 +6,543 @@
   <title>apeSketch</title>
   <style>
     :root {
-      --bg: #f4f2ec;
-      --ink: #1a1a1a;
-      --line: #cfcabe;
+      --paper: #fafaf7;
+      --ink: #1c1b19;
+      --muted: #6e6a62;
+      --line: rgba(40, 36, 30, 0.12);
       --accent: #2f5d50;
+      --accent-soft: rgba(47, 93, 80, 0.12);
+      --glass: rgba(252, 251, 247, 0.92);
+      --danger: #8a3b2b;
+      --rail: 52px;
     }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
+      width: 100%;
       height: 100%;
-      background: var(--bg);
-      color: var(--ink);
-      font: 14px/1.4 "Segoe UI", system-ui, sans-serif;
       overflow: hidden;
-      touch-action: none;
-    }
-    #bar {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      padding: 8px 12px;
-      border-bottom: 1px solid var(--line);
-      background: #fff;
-    }
-    #bar button {
-      border: 1px solid var(--line);
-      background: #fff;
+      background: var(--paper);
       color: var(--ink);
-      padding: 6px 10px;
-      border-radius: 4px;
-      cursor: pointer;
+      font: 13px/1.35 "Segoe UI", system-ui, sans-serif;
+      touch-action: none;
+      transition: background 180ms ease, color 180ms ease;
     }
-    #bar button:hover { border-color: var(--accent); }
-    #status { margin-left: auto; color: #666; font-size: 12px; }
+    body.theme-dark {
+      --ink: #e8e6df;
+      --muted: #a8a49a;
+      --line: rgba(230, 228, 220, 0.14);
+      --glass: rgba(28, 33, 28, 0.88);
+      --accent-soft: rgba(140, 190, 160, 0.16);
+    }
+    body.theme-dark .brand {
+      color: rgba(232, 230, 223, 0.55);
+    }
+
     #board {
+      position: fixed;
+      inset: 0;
       display: block;
       width: 100%;
-      height: calc(100% - 45px);
-      background: #fafaf7;
+      height: 100%;
+      background: var(--paper);
       cursor: crosshair;
       touch-action: none;
+      z-index: 0;
+    }
+    #overlay {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+    #board.panning { cursor: grab; }
+    #board.panning.dragging { cursor: grabbing; }
+    #board.erasing { cursor: cell; }
+
+    .brand {
+      position: fixed;
+      top: 16px;
+      left: 18px;
+      z-index: 3;
+      pointer-events: none;
+      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      font-size: 1.15rem;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      color: rgba(28, 27, 25, 0.55);
+      animation: brand-in 480ms ease-out both;
+    }
+
+    .dock {
+      position: fixed;
+      z-index: 4;
+      display: flex;
+      gap: 4px;
+      padding: 6px;
+      background: var(--glass);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      animation: dock-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+
+    .dock-tools {
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      flex-direction: column;
+      animation-delay: 60ms;
+    }
+
+    .dock-view {
+      right: 16px;
+      bottom: 16px;
+      flex-direction: row;
+      align-items: center;
+      animation-delay: 120ms;
+    }
+
+    .dock-meta {
+      left: 16px;
+      bottom: 16px;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      max-width: min(52vw, 280px);
+      animation-delay: 180ms;
+    }
+
+    .dock-style {
+      left: 84px;
+      top: 50%;
+      transform: translateY(-50%);
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px;
+      animation-delay: 90ms;
+      max-height: min(78vh, 560px);
+      overflow: auto;
+      display: none;
+    }
+    .dock-style.open {
+      display: flex;
+      animation: dock-in 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+    .dock-eraser {
+      left: 84px;
+      top: 50%;
+      transform: translateY(-50%);
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px 10px;
+      display: none;
+      min-width: 108px;
+    }
+    .dock-eraser.open {
+      display: flex;
+      animation: dock-in 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+    .dock-export {
+      right: 16px;
+      bottom: 72px;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px;
+      display: none;
+      min-width: 132px;
+    }
+    .dock-export.open {
+      display: flex;
+      animation: dock-in-br 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+    .dock-export button.export-action {
+      width: auto;
+      height: 34px;
+      padding: 0 10px;
+      border-radius: 8px;
+      justify-content: flex-start;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .dock-export button.export-action.recording {
+      background: rgba(138, 59, 43, 0.16);
+      color: var(--danger);
+    }
+    .pen-row, .tip-row {
+      display: flex;
+      flex-direction: row;
+      gap: 4px;
+    }
+    .swatches {
+      display: grid;
+      grid-template-columns: repeat(2, 22px);
+      gap: 4px;
+    }
+    .bg-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      align-items: center;
+    }
+    .size-row {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      align-items: stretch;
+      min-width: 88px;
+    }
+    .size-row input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .size-value {
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+    }
+    .dock-style button.tip-shape {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+    }
+    .dock-style button.tip-shape svg {
+      width: 16px;
+      height: 16px;
+    }
+    .swatch, .bg-swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      border: 1px solid rgba(0,0,0,0.18);
+      padding: 0;
+      cursor: pointer;
+      background: var(--swatch, #000);
+    }
+    .swatch:hover, .bg-swatch:hover {
+      background: var(--swatch, #000);
+      filter: brightness(1.08);
+      color: inherit;
+    }
+    .swatch.active, .bg-swatch.active {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .bg-swatch.paper { --swatch: #fafaf7; }
+    .bg-swatch.board { --swatch: #1c211c; }
+    .dock-style .label,
+    .dock-eraser .label,
+    .dock-export .label {
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      text-align: center;
+      user-select: none;
+    }
+    .dock-style button.pen-kind {
+      width: 40px;
+      height: 40px;
+    }
+    .dock-style button.swatch,
+    .dock-style button.bg-swatch {
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: var(--swatch, #000);
+      color: inherit;
+    }
+    .dock-style button.swatch:hover,
+    .dock-style button.bg-swatch:hover,
+    .dock-style button.swatch.active,
+    .dock-style button.bg-swatch.active {
+      background: var(--swatch, #000);
+      color: inherit;
+    }
+
+    .dock button {
+      appearance: none;
+      width: var(--rail);
+      height: var(--rail);
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--ink);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      transition: background 140ms ease, color 140ms ease, transform 140ms ease;
+    }
+    .dock button svg {
+      width: 22px;
+      height: 22px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.75;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .dock button:hover {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .dock button:active { transform: scale(0.96); }
+    .dock button.active {
+      background: var(--accent);
+      color: #f7f5ef;
+    }
+    .dock button.danger:hover {
+      background: rgba(138, 59, 43, 0.12);
+      color: var(--danger);
+    }
+    .dock .sep {
+      height: 1px;
+      margin: 4px 8px;
+      background: var(--line);
+    }
+    .dock-view .sep {
+      width: 1px;
+      height: 22px;
+      margin: 0 4px;
+    }
+
+    #zoom-label {
+      min-width: 3rem;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      font-size: 12px;
+      user-select: none;
+    }
+
+    #status {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #perf-hud {
+      display: none;
+      position: fixed;
+      right: 16px;
+      top: 16px;
+      width: 300px;
+      max-height: calc(100% - 96px);
+      overflow: auto;
+      padding: 10px 12px;
+      background: rgba(20, 22, 20, 0.9);
+      color: #e8e6df;
+      font: 11px/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      white-space: pre;
+      pointer-events: none;
+      z-index: 5;
+    }
+    #perf-hud.on { display: block; }
+
+    @keyframes dock-in {
+      from { opacity: 0; transform: translateY(-50%) translateX(-10px); }
+      to { opacity: 1; transform: translateY(-50%) translateX(0); }
+    }
+    .dock-view {
+      animation-name: dock-in-br;
+    }
+    .dock-meta {
+      animation-name: dock-in-bl;
+    }
+    @keyframes dock-in-br {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes dock-in-bl {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes brand-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 640px) {
+      .dock-tools {
+        top: auto;
+        bottom: 72px;
+        transform: none;
+        flex-direction: row;
+        left: 50%;
+        translate: -50% 0;
+        animation-name: dock-in-br;
+      }
+      .dock-style.open,
+      .dock-eraser.open {
+        left: 12px;
+        right: 12px;
+        top: 52px;
+        transform: none;
+        flex-direction: row;
+        flex-wrap: wrap;
+        max-height: none;
+        translate: 0 0;
+        animation-name: dock-in-br;
+      }
+      .dock-export.open {
+        left: 12px;
+        right: 12px;
+        bottom: 128px;
+        top: auto;
+        flex-direction: row;
+        flex-wrap: wrap;
+      }
+      .swatches { grid-template-columns: repeat(6, 22px); }
+      .brand { font-size: 1rem; left: 14px; top: 12px; }
+      .dock-meta { max-width: 42vw; }
     }
   </style>
 </head>
 <body>
-  <div id="bar">
-    <strong>apeSketch</strong>
-    <button type="button" id="btn-clear">Clear</button>
-    <button type="button" id="btn-undo">Undo stroke</button>
-    <button type="button" id="btn-pair">Pair</button>
+  <canvas id="board"></canvas>
+  <canvas id="overlay" aria-hidden="true"></canvas>
+
+  <div class="brand">apeSketch</div>
+
+  <nav class="dock dock-tools" aria-label="Tools">
+    <button type="button" id="btn-pen" class="active" title="Pen (B) · double-click for style">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l3.2-.7L18.5 7.9a2 2 0 0 0 0-2.8l-.6-.6a2 2 0 0 0-2.8 0L3.7 15.8 4 20z"/><path d="M13.8 6.2l4 4"/></svg>
+    </button>
+    <button type="button" id="btn-erase-stroke" title="Erase stroke (E) · double-click for size">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h14"/><path d="M8 16l8-8"/><path d="M9 7l8 8"/><path d="M7 9l2-2 8 8-2 2z"/></svg>
+    </button>
+    <button type="button" id="btn-erase-partial" title="Erase partial (E) · double-click for size">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 16l7-7 5 5-4 4H8l-3-2z"/><path d="M12 9l3-3 3 3-3 3"/><path d="M5 20h10"/></svg>
+    </button>
+    <button type="button" id="btn-pan" title="Pan (Space / middle mouse)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18"/><path d="M3 12h18"/><path d="M12 3l-3 3"/><path d="M12 3l3 3"/><path d="M12 21l-3-3"/><path d="M12 21l3-3"/><path d="M3 12l3-3"/><path d="M3 12l3 3"/><path d="M21 12l-3-3"/><path d="M21 12l-3 3"/></svg>
+    </button>
+    <button type="button" id="btn-image" title="Import image (or paste)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M5 17l4.5-4.5L13 16l2-2 4 4"/></svg>
+    </button>
+    <div class="sep" aria-hidden="true"></div>
+    <button type="button" id="btn-undo" title="Undo last stroke">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7L4 12l5 5"/><path d="M4 12h10a5 5 0 0 1 0 10h-2"/></svg>
+    </button>
+    <button type="button" id="btn-clear" class="danger" title="Clear page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14"/><path d="M9 7V5h6v2"/><path d="M7 7l1 13h8l1-13"/></svg>
+    </button>
+  </nav>
+
+  <aside class="dock dock-style" id="dock-style" aria-label="Ink style" hidden>
+    <div class="pen-row">
+      <button type="button" class="pen-kind active" id="btn-kind-pen" title="Pen" data-kind="pen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l3.2-.7L18.5 7.9a2 2 0 0 0 0-2.8l-.6-.6a2 2 0 0 0-2.8 0L3.7 15.8 4 20z"/></svg>
+      </button>
+      <button type="button" class="pen-kind" id="btn-kind-fountain" title="Fountain pen" data-kind="fountain">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l2 5-2 13-2-13 2-5z"/><path d="M10 8h4"/><path d="M9 21h6"/></svg>
+      </button>
+      <button type="button" class="pen-kind" id="btn-kind-chalk" title="Chalk" data-kind="chalk">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16l6-9 6 4-4 8H9l-3-3z"/><path d="M8 20h10"/></svg>
+      </button>
+    </div>
+    <div class="sep" aria-hidden="true"></div>
+    <div class="label">Size</div>
+    <div class="size-row">
+      <input type="range" id="ink-width" min="1" max="24" step="0.5" value="2.5" aria-label="Pen size" />
+      <span class="size-value" id="ink-width-label">2.5</span>
+    </div>
+    <div class="label">Tip</div>
+    <div class="tip-row">
+      <button type="button" class="tip-shape active" data-tip="round" title="Round tip">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6"/></svg>
+      </button>
+      <button type="button" class="tip-shape" data-tip="square" title="Square tip">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+      </button>
+      <button type="button" class="tip-shape" data-tip="chisel" title="Chisel tip">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17L17 7"/><path d="M9 19l6-6"/><path d="M5 15l6-6"/></svg>
+      </button>
+    </div>
+    <div class="sep" aria-hidden="true"></div>
+    <div class="label">Ink</div>
+    <div class="swatches" id="color-swatches">
+      <button type="button" class="swatch active" data-color="#000000" title="Black" style="--swatch:#000000"></button>
+      <button type="button" class="swatch" data-color="#c62828" title="Red" style="--swatch:#c62828"></button>
+      <button type="button" class="swatch" data-color="#1565c0" title="Blue" style="--swatch:#1565c0"></button>
+      <button type="button" class="swatch" data-color="#001199" title="Blue-violet #001199" style="--swatch:#001199"></button>
+      <button type="button" class="swatch" data-color="#ffffff" title="White" style="--swatch:#ffffff"></button>
+      <button type="button" class="swatch" data-color="#404040" title="Dark gray" style="--swatch:#404040"></button>
+      <button type="button" class="swatch" data-color="#808080" title="Gray 128" style="--swatch:#808080"></button>
+      <button type="button" class="swatch" data-color="#c0c0c0" title="Gray 192" style="--swatch:#c0c0c0"></button>
+      <button type="button" class="swatch" data-color="#d2d2d2" title="Gray 210" style="--swatch:#d2d2d2"></button>
+      <button type="button" class="swatch" data-color="#00acc1" title="Cyan" style="--swatch:#00acc1"></button>
+      <button type="button" class="swatch" data-color="#90caf9" title="Light blue" style="--swatch:#90caf9"></button>
+    </div>
+    <div class="sep" aria-hidden="true"></div>
+    <div class="label">Board</div>
+    <div class="bg-row">
+      <button type="button" class="bg-swatch paper active" id="btn-bg-paper" data-bg="#fafaf7" title="Paper"></button>
+      <button type="button" class="bg-swatch board" id="btn-bg-board" data-bg="#1c211c" title="Blackboard"></button>
+    </div>
+  </aside>
+
+  <aside class="dock dock-eraser" id="dock-eraser" aria-label="Eraser size" hidden>
+    <div class="label">Eraser</div>
+    <div class="size-row">
+      <input type="range" id="eraser-size" min="4" max="48" step="1" value="14" aria-label="Eraser size" />
+      <span class="size-value" id="eraser-size-label">14</span>
+    </div>
+  </aside>
+
+  <aside class="dock dock-export" id="dock-export" aria-label="Export and record" hidden>
+    <div class="label">Export</div>
+    <button type="button" class="export-action" id="btn-export-png" title="Download viewport PNG">PNG</button>
+    <button type="button" class="export-action" id="btn-export-svg" title="Download board SVG">SVG</button>
+    <button type="button" class="export-action" id="btn-export-json" title="Download document JSON">JSON</button>
+    <div class="sep" aria-hidden="true"></div>
+    <div class="label">Record</div>
+    <button type="button" class="export-action" id="btn-record" title="Record board video">Start</button>
+  </aside>
+
+  <input type="file" id="file-image" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+
+  <div class="dock dock-view" aria-label="View">
+    <button type="button" id="btn-zoom-out" title="Zoom out">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-3.5-3.5"/><path d="M8 11h6"/></svg>
+    </button>
+    <span id="zoom-label">100%</span>
+    <button type="button" id="btn-zoom-in" title="Zoom in">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M20 20l-3.5-3.5"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>
+    </button>
+    <button type="button" id="btn-zoom-reset" title="Reset zoom">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 5v5h5"/></svg>
+    </button>
+    <div class="sep" aria-hidden="true"></div>
+    <button type="button" id="btn-export" title="Export / record">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10"/><path d="M8 10l4 4 4-4"/><path d="M5 18h14"/></svg>
+    </button>
+    <button type="button" id="btn-pair" title="Pair tablet">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M10 17h4"/><path d="M9 8h6v5H9z"/></svg>
+    </button>
+    <button type="button" id="btn-perf" title="Performance HUD (P)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5"/><path d="M4 19h16"/><path d="M8 15l3-4 3 2 4-6"/></svg>
+    </button>
+    <button type="button" id="btn-perf-export" title="Export perf JSON" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10"/><path d="M8 10l4 4 4-4"/><path d="M5 20h14"/></svg>
+    </button>
+  </div>
+
+  <div class="dock dock-meta" aria-live="polite">
     <span id="status">connecting…</span>
   </div>
-  <canvas id="board"></canvas>
+
+  <pre id="perf-hud"></pre>
   <script src="/board.js"></script>
 </body>
 </html>

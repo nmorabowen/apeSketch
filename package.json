@@ -1,0 +1,12 @@
+{
+  "name": "apesketch",
+  "private": true,
+  "description": "Dev tooling for apeSketch board benches",
+  "type": "module",
+  "devDependencies": {
+    "playwright": "1.62.1"
+  },
+  "scripts": {
+    "bench:erase": "node scripts/bench_erase.mjs"
+  }
+}

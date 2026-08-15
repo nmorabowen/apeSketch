@@ -6,6 +6,7 @@ import secrets
 import string
 from typing import Any, Callable
 
+from apeSketch.assets import AssetStore
 from apeSketch.document import Document
 from apeSketch.errors import DocumentError
 from apeSketch.ops import Op, op_from_dict, op_to_dict
@@ -23,8 +24,14 @@ def _room_code(length: int = 6) -> str:
 class SketchSession:
     """Owns one Document. Clients submit Ops; listeners get broadcasts."""
 
-    def __init__(self, document: Document | None = None) -> None:
+    def __init__(
+        self,
+        document: Document | None = None,
+        *,
+        assets: AssetStore | None = None,
+    ) -> None:
         self.document = document if document is not None else Document()
+        self.assets = assets if assets is not None else AssetStore()
         self.room_code = _room_code()
         self.token = secrets.token_urlsafe(16)
         self._listeners: list[Listener] = []
@@ -52,6 +59,37 @@ class SketchSession:
         self, data: dict[str, Any], *, exclude: Listener | None = None
     ) -> dict[str, Any]:
         return self.apply(op_from_dict(data), exclude=exclude)
+
+    def apply_many_dicts(
+        self, items: list[dict[str, Any]], *, exclude: Listener | None = None
+    ) -> dict[str, Any]:
+        """Apply several ops.
+
+        Clients may upload a batched ``ops`` message; we still broadcast each
+        change as a normal ``op`` so older board.js clients stay in sync.
+        """
+        if not items:
+            return {"type": "ops", "rev": self.document.revision, "ops": []}
+        encoded: list[dict[str, Any]] = []
+        for data in items:
+            op = op_from_dict(data)
+            self.document.apply(op)
+            payload = op_to_dict(op)
+            encoded.append(payload)
+            message = {
+                "type": "op",
+                "rev": self.document.revision,
+                "op": payload,
+            }
+            for listener in list(self._listeners):
+                if exclude is not None and listener is exclude:
+                    continue
+                listener(message)
+        return {
+            "type": "ops",
+            "rev": self.document.revision,
+            "ops": encoded,
+        }
 
     def snapshot_message(self) -> dict[str, Any]:
         return {
