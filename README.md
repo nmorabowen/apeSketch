@@ -6,7 +6,7 @@ apeSketch is a **standalone Python library**. It records freehand
 sketches (drawing tablet or Wi-Fi client), keeps a Session Document as
 source of truth, and exports for agents and later apeCAD.
 
-This repository is **private**. Status: pre-alpha — architecture under
+This repository is **public** (MIT). Status: pre-alpha — architecture under
 [`AProjects/`](AProjects/README.md); prototype P0/P1 started.
 
 ## Locked decisions
