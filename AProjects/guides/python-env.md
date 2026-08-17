@@ -8,13 +8,19 @@ apeSketch uses the shared OpenSees toolchain venv, not a repo-local `.venv`.
 | Python | `C:\Users\nmb\venv\opensees_env\Scripts\python.exe` |
 | Activate (PowerShell) | `C:\Users\nmb\venv\opensees_env\Scripts\Activate.ps1` |
 
-Install / refresh (from the apeSketch checkout):
+Released package:
 
 ```powershell
-C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m pip install -e ".[dev,host]"
+C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m pip install apeSketch
 ```
 
-Host extras (`websockets`, `segno`) are required for live WS + QR pairing.
+Editable checkout (contributors):
+
+```powershell
+C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m pip install -e ".[dev]"
+```
+
+`websockets` and `segno` are base dependencies (live WS + QR pairing).
 
 ```powershell
 C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m apeSketch

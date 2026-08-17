@@ -1,7 +1,6 @@
 """HTTP + optional WebSocket Session host (prototype P1).
 
-HTTP board works with zero deps. Live multi-client WS needs:
-  pip install -e ".[host]"
+Live multi-client WS needs ``websockets`` (included in ``pip install apeSketch``).
 """
 
 from __future__ import annotations
@@ -557,7 +556,7 @@ async def _run_ws(session: SketchSession, host: str, port: int) -> None:
     try:
         from websockets.asyncio.server import serve
     except ImportError as exc:
-        raise SystemExit('WebSocket host requires: pip install -e ".[host]"') from exc
+        raise SystemExit("WebSocket host requires: pip install apeSketch") from exc
 
     async def handler(websocket: Any) -> None:
         await _ws_handler(websocket, session)

@@ -18,38 +18,37 @@ This repository is **public** (MIT). Status: pre-alpha — architecture under
 | [0004](AProjects/adrs/0004-lan-session-host.md) | LAN Session host; Wi-Fi Direct deferred |
 | [0005](AProjects/adrs/0005-own-core-adopt-patterns.md) | Own core; adopt patterns / small MIT deps |
 
-## Quick start
+## Installation
 
-Canonical Python env (shared OpenSees toolchain venv):
+```bash
+pip install apeSketch
+```
 
-```powershell
-# Windows — use opensees_env (folder name under C:\Users\nmb\venv)
-C:\Users\nmb\venv\opensees_env\Scripts\Activate.ps1
-cd apeSketch
-pip install -e ".[dev,host]"
-pytest
+Then start a Session host:
+
+```bash
 python -m apeSketch
 ```
-
-Or without activating:
-
-```powershell
-C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m pip install -e ".[dev,host]"
-C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m pytest
-C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m apeSketch
-```
-
-Do **not** rely on apeSketch’s local `.venv` for day-to-day work; keep deps in `opensees_env`.
 
 Opens a board on port **9966** (HTTP) with WebSocket on **9967**
 (apeCAD uses 8765 — these stay separate). Pair page: `/pair`. Phone on
 the same Wi‑Fi can open the advertised board URL.
 
-HTTP-only (no `websockets`):
+HTTP-only (no WebSocket):
 
 ```bash
 python -m apeSketch --http-only
 ```
+
+From this checkout (shared OpenSees toolchain venv):
+
+```powershell
+C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m pip install -e ".[dev]"
+C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m pytest
+C:\Users\nmb\venv\opensees_env\Scripts\python.exe -m apeSketch
+```
+
+Do **not** rely on apeSketch’s local `.venv` for day-to-day work; keep deps in `opensees_env`.
 
 ## Layout
 

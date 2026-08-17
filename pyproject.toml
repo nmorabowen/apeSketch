@@ -1,20 +1,21 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "apeSketch"
-version = "0.0.0"
+version = "0.1.0"
 description = "Hand-ink bridge for ape* structural workflows: capture, session, agent export."
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [
     { name = "Nicolas Mora Bowen", email = "nmorabowen@gmail.com" },
 ]
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["ink", "sketch", "stylus", "whiteboard", "agent", "scratchpad"]
 classifiers = [
-    "Development Status :: 1 - Planning",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -24,7 +25,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-dependencies = []
+dependencies = [
+    "websockets>=12",
+    "segno>=1.6",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -33,14 +37,19 @@ dev = [
     "pytest>=8",
     "pytest-cov>=5",
 ]
+# Kept as an alias: host extras are now the default install.
 host = [
     "websockets>=12",
     "segno>=1.6",
 ]
 
+[project.scripts]
+apeSketch = "apeSketch.host.server:main"
+
 [project.urls]
-"Homepage" = "https://github.com/nmorabowen/apeSketch"
-"Bug Tracker" = "https://github.com/nmorabowen/apeSketch/issues"
+Homepage = "https://github.com/nmorabowen/apeSketch"
+Repository = "https://github.com/nmorabowen/apeSketch"
+Issues = "https://github.com/nmorabowen/apeSketch/issues"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
