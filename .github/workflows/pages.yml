@@ -2,7 +2,7 @@ name: Pages
 
 on:
   push:
-    branches: [master, feature/instance-scoped-host]
+    branches: [master]
   workflow_dispatch:
 
 permissions:

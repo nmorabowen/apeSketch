@@ -1,151 +1,208 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>apeSketch — ink bridge</title>
-  <meta name="description" content="Hand-ink bridge for the ape* structural toolchain. Capture sketches, keep a Session Document, export for agents and apeCAD." />
-  <link rel="icon" href="assets/favicon.ico" sizes="any" />
-  <link rel="icon" type="image/png" href="assets/favicon-32.png" sizes="32x32" />
-  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
-  <meta property="og:title" content="apeSketch" />
-  <meta property="og:description" content="Hand-ink bridge for the ape* structural toolchain." />
-  <meta property="og:image" content="assets/og.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@700&amp;family=IBM+Plex+Mono:wght@400;600&amp;display=swap" rel="stylesheet" />
-  <style>
-    :root {
-      --paper: #f4f0e6;
-      --paper-alt: #ede7d6;
-      --ink: #101820;
-      --accent: #c64a1a;
-      --muted: rgba(16, 24, 32, 0.55);
-      --hair: rgba(16, 24, 32, 0.18);
-    }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; }
-    body {
-      min-height: 100vh;
-      color: var(--ink);
-      background-color: var(--paper);
-      background-image:
-        linear-gradient(var(--hair) 1px, transparent 1px),
-        linear-gradient(90deg, var(--hair) 1px, transparent 1px);
-      background-size: 72px 72px;
-      background-position: center;
-      font: 16px/1.5 "Segoe UI", system-ui, sans-serif;
-    }
-    main {
-      width: min(720px, calc(100% - 32px));
-      margin: 48px auto;
-      background: var(--paper);
-      border: 1px solid var(--hair);
-      padding: 40px 36px 32px;
-      position: relative;
-      box-shadow: 0 18px 40px rgba(16, 24, 32, 0.08);
-    }
-    main::before, main::after {
-      content: "";
-      position: absolute;
-      width: 12px;
-      height: 12px;
-      border: 1px solid var(--accent);
-      pointer-events: none;
-    }
-    main::before { top: 10px; left: 10px; border-right: 0; border-bottom: 0; }
-    main::after { bottom: 10px; right: 10px; border-left: 0; border-top: 0; }
-    .lockup {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-      margin-bottom: 28px;
-    }
-    .lockup img.mark {
-      width: 180px;
-      height: 180px;
-      display: block;
-    }
-    h1 {
-      margin: 12px 0 0;
-      font-family: "Archivo Narrow", sans-serif;
-      font-size: 2.6rem;
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      line-height: 1;
-    }
-    .tag {
-      margin: 10px 0 0;
-      font-family: "Archivo Narrow", sans-serif;
-      font-size: 0.75rem;
-      letter-spacing: 0.32em;
-      text-transform: uppercase;
-      color: var(--accent);
-    }
-    .lead {
-      margin: 0 auto 28px;
-      max-width: 36em;
-      text-align: center;
-      color: var(--muted);
-    }
-    pre {
-      margin: 0 auto 28px;
-      width: min(100%, 28rem);
-      padding: 14px 16px;
-      background: var(--paper-alt);
-      border: 1px solid var(--hair);
-      overflow: auto;
-      font: 600 0.92rem/1.45 "IBM Plex Mono", ui-monospace, monospace;
-    }
-    nav {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      justify-content: center;
-    }
-    a.btn {
-      border: 1px solid var(--hair);
-      color: var(--ink);
-      padding: 8px 14px;
-      text-decoration: none;
-      font: 700 0.85rem/1 "Archivo Narrow", sans-serif;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-    a.btn:hover { border-color: var(--accent); color: var(--accent); }
-    a.btn.primary { border-color: var(--accent); color: var(--accent); }
-    footer {
-      margin-top: 28px;
-      text-align: center;
-      font-size: 0.8rem;
-      color: var(--muted);
-    }
-    footer a { color: var(--accent); }
-  </style>
-</head>
-<body>
-  <main>
-    <div class="lockup">
-      <img class="mark" src="assets/mark.png" width="180" height="180" alt="apeSketch mark" />
-      <h1>apeSketch</h1>
-      <p class="tag">Ink bridge</p>
-    </div>
-    <p class="lead">
-      Hand-ink bridge for the ape* structural toolchain. Capture freehand
-      sketches, keep a Session Document as source of truth, and export for
-      agents and later apeCAD.
-    </p>
-    <pre>pip install apeSketch
-python -m apeSketch</pre>
-    <nav>
-      <a class="btn primary" href="https://github.com/nmorabowen/apeSketch">GitHub</a>
-      <a class="btn" href="https://pypi.org/project/apeSketch/">PyPI</a>
-      <a class="btn" href="https://github.com/nmorabowen/apeSketch/blob/master/AProjects/adrs/0002-ink-bridge-scratchpad.md">ADR 0002</a>
-    </nav>
-    <footer>
-      MIT · pre-alpha · <a href="https://github.com/nmorabowen/apeSketch">nmorabowen/apeSketch</a>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>apeSketch</title>
+    <meta
+      name="description"
+      content="apeSketch is the ink bridge of the ape* toolchain: tablet to Session Document to agents and apeCAD."
+    />
+    <meta property="og:title" content="apeSketch" />
+    <meta
+      property="og:description"
+      content="Hand-ink bridge. Not a whiteboard product. Not apeCAD."
+    />
+    <meta property="og:url" content="https://nmorabowen.github.io/apeSketch/" />
+    <meta property="og:image" content="https://nmorabowen.github.io/apeSketch/brand/og.png" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="brand/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" href="brand/icon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="brand/apple-touch.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#manifesto">Skip to content</a>
+
+    <header class="hero">
+      <div class="hero-frame">
+        <p class="sheet-id">APE-SK · SHEET 01 · PRE-ALPHA</p>
+        <div class="hero-grid">
+          <figure class="hero-bust">
+            <img
+              src="brand/mark-dark.png"
+              alt="Da Vinci folio: chimpanzee in an ornithopter, drawing"
+            />
+          </figure>
+          <div class="hero-type">
+            <p class="eyebrow">APE Ingeniería · ink bridge</p>
+            <h1>
+              <span class="ape">ape</span>
+              <span class="rule" aria-hidden="true"></span>
+              <span class="sketch">Sketch</span>
+            </h1>
+            <p class="lede">
+              Hand ink in. A Session Document out. Agents and apeCAD
+              read the same page.
+            </p>
+            <p class="hero-actions">
+              <a class="btn" href="https://github.com/nmorabowen/apeSketch">Repository</a>
+              <a class="btn ghost" href="#run">Start a host</a>
+            </p>
+          </div>
+        </div>
+        <p class="scroll-cue">Folio · scroll down</p>
+      </div>
+    </header>
+
+    <main>
+      <section id="manifesto" class="sheet">
+        <header class="sheet-head">
+          <span>00</span>
+          <h2>This is a bridge</h2>
+        </header>
+        <p class="manifesto">
+          apeSketch captures hand ink and turns it into a durable document
+          for agents and for the ape* toolchain. It is not a whiteboard
+          product and not a CAD modeller. The Document is the language.
+          Clients emit Ops. The Session is live authority on the LAN.
+        </p>
+      </section>
+
+      <section class="triptych">
+        <article>
+          <img src="brand/mark.png" alt="" />
+          <h3>Capture</h3>
+          <p>Tablet or Wi-Fi client. Strokes with time, pressure, stable IDs.</p>
+        </article>
+        <article>
+          <img src="brand/lockup-stacked.png" alt="" />
+          <h3>Document</h3>
+          <p>Python source of truth. Ops in. Session Document out.</p>
+        </article>
+        <article>
+          <img src="brand/wordmark.png" alt="" />
+          <h3>Egress</h3>
+          <p>Structured ink plus on-demand raster. Then promote into apeCAD.</p>
+        </article>
+      </section>
+
+      <section class="sheet split">
+        <header class="sheet-head">
+          <span>01</span>
+          <h2>Is / is not</h2>
+        </header>
+        <div class="spec">
+          <div>
+            <h3>Is</h3>
+            <ul>
+              <li>Ink bridge: stylus → Session Document → agents / apeCAD</li>
+              <li>Document-first Python library, MIT</li>
+              <li>Dual egress: structured strokes + raster</li>
+              <li>LAN Session host, one process per instance root</li>
+              <li>Preferred ports 9966 / 9967, not machine identity</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Is not</h3>
+            <ul>
+              <li>A whiteboard SaaS or Excalidraw competitor</li>
+              <li>apeCAD (that is spatial intent)</li>
+              <li>apeWorkbench (that is the Habitat shell)</li>
+              <li>OS-level “phone as Wacom”</li>
+              <li>A chat UI</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="sheet">
+        <header class="sheet-head">
+          <span>02</span>
+          <h2>The chain</h2>
+        </header>
+        <ol class="steps">
+          <li>
+            <strong>Client</strong>
+            Android or desktop UI emits Ops. It does not own the Document.
+          </li>
+          <li>
+            <strong>Session</strong>
+            Live authority on the LAN. HTTP board, WebSocket, pair page.
+            One host per <code>--root</code>.
+          </li>
+          <li>
+            <strong>Document</strong>
+            Canonical ink store in Python. Strokes, layers, timing.
+            Dual agent bundle when asked.
+          </li>
+        </ol>
+      </section>
+
+      <section id="run" class="sheet run">
+        <header class="sheet-head">
+          <span>03</span>
+          <h2>Door</h2>
+        </header>
+        <p>
+          Install the library. Start a Session host in the folder you
+          want as the instance root.
+        </p>
+        <pre><code>pip install apeSketch
+python -m apeSketch</code></pre>
+        <p class="fine">
+          Opens a board on preferred port <code>9966</code> (HTTP) with
+          WebSocket on <code>9967</code>. Pair at <code>/pair</code>.
+          Point another folder with <code>--root</code>; a second
+          instance binds the next free pair.
+        </p>
+      </section>
+
+      <section class="sheet">
+        <header class="sheet-head">
+          <span>04</span>
+          <h2>Brain</h2>
+        </header>
+        <p>
+          Product and architecture live in
+          <a href="https://github.com/nmorabowen/apeSketch/tree/master/AProjects">AProjects/</a>
+          — ADRs, memory, specs. Locked: ink bridge, Python Document,
+          LAN Session host, instance-scoped root.
+        </p>
+        <p class="fine">
+          Status: pre-alpha. MIT. Part of the ape* toolchain, not a
+          second apeWorkbench.
+        </p>
+      </section>
+    </main>
+
+    <footer class="titleblock">
+      <div>
+        <span class="k">Drawn</span>
+        <span>APE Ingeniería</span>
+      </div>
+      <div>
+        <span class="k">Title</span>
+        <span>apeSketch — ink bridge</span>
+      </div>
+      <div>
+        <span class="k">Sheet</span>
+        <span>01 / 01</span>
+      </div>
+      <div>
+        <span class="k">Rev</span>
+        <span>0.1.0 · 2026</span>
+      </div>
+      <div class="titleblock-mark">
+        <img src="brand/wordmark.png" alt="apeSketch" />
+      </div>
     </footer>
-  </main>
-</body>
+  </body>
 </html>

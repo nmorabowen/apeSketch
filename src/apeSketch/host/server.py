@@ -275,6 +275,8 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(raw)
             return
+        if self._try_brand_file(path):
+            return
         if path == "/api/pair/qr.svg":
             info = self.server.session.pair_info(
                 host=self.server.advertise_host,
@@ -469,6 +471,35 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    _BRAND_MIME = {
+        ".ico": "image/x-icon",
+        ".png": "image/png",
+        ".svg": "image/svg+xml",
+        ".css": "text/css",
+        ".ttf": "font/ttf",
+    }
+
+    def _try_brand_file(self, path: str) -> bool:
+        rel: str | None = None
+        if path == "/favicon.ico":
+            rel = "favicon.ico"
+        elif path == "/apple-touch-icon.png":
+            rel = "apple-touch-icon.png"
+        elif path.startswith("/brand/"):
+            rel = path[len("/brand/") :]
+        if rel is None or not rel or ".." in Path(rel).parts:
+            return False
+        candidate = (STATIC_DIR / rel).resolve()
+        try:
+            candidate.relative_to(STATIC_DIR.resolve())
+        except ValueError:
+            return False
+        if not candidate.is_file():
+            return False
+        mime = self._BRAND_MIME.get(candidate.suffix.lower(), "application/octet-stream")
+        self._send_file(candidate, mime)
+        return True
 
     def _send_file(self, path: Path, content_type: str, *, no_store: bool = False) -> None:
         if not path.is_file():

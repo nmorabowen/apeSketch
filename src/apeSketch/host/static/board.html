@@ -4,17 +4,27 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>apeSketch</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/brand/favicon-32.png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <style>
     :root {
-      --paper: #fafaf7;
-      --ink: #1c1b19;
-      --muted: #6e6a62;
-      --line: rgba(40, 36, 30, 0.12);
-      --accent: #2f5d50;
-      --accent-soft: rgba(47, 93, 80, 0.12);
-      --glass: rgba(252, 251, 247, 0.92);
+      --paper: #f4f0e6;
+      --ink: #101820;
+      --muted: rgba(16, 24, 32, 0.55);
+      --line: rgba(16, 24, 32, 0.18);
+      --accent: #c64a1a;
+      --accent-soft: rgba(198, 74, 26, 0.12);
+      --glass: rgba(244, 240, 230, 0.92);
       --danger: #8a3b2b;
       --rail: 52px;
+    }
+    @font-face {
+      font-family: "Archivo Narrow";
+      src: url("/brand/fonts/ArchivoNarrow-Bold.ttf") format("truetype");
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -29,11 +39,11 @@
       transition: background 180ms ease, color 180ms ease;
     }
     body.theme-dark {
-      --ink: #e8e6df;
-      --muted: #a8a49a;
-      --line: rgba(230, 228, 220, 0.14);
-      --glass: rgba(28, 33, 28, 0.88);
-      --accent-soft: rgba(140, 190, 160, 0.16);
+      --ink: #f4eee1;
+      --muted: rgba(244, 238, 225, 0.55);
+      --line: rgba(244, 238, 225, 0.18);
+      --glass: rgba(11, 37, 64, 0.88);
+      --accent-soft: rgba(240, 165, 97, 0.16);
     }
     body.theme-dark .brand {
       color: rgba(232, 230, 223, 0.55);
@@ -96,16 +106,41 @@
 
     .brand {
       position: fixed;
-      top: 16px;
-      left: 18px;
+      top: 14px;
+      left: 16px;
       z-index: 3;
       pointer-events: none;
-      font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
-      font-size: 1.15rem;
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      color: rgba(28, 27, 25, 0.55);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink);
       animation: brand-in 480ms ease-out both;
+    }
+    .brand img {
+      width: 44px;
+      height: 44px;
+      display: block;
+      background: var(--paper);
+    }
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      line-height: 1;
+    }
+    .brand-name {
+      font-family: "Archivo Narrow", "Segoe UI", system-ui, sans-serif;
+      font-size: 1.2rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .brand-tag {
+      font-family: "Archivo Narrow", "Segoe UI", system-ui, sans-serif;
+      font-size: 0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--accent);
     }
 
     .dock {
@@ -116,7 +151,7 @@
       padding: 6px;
       background: var(--glass);
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: 6px;
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
       animation: dock-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
@@ -394,8 +429,8 @@
       outline: 2px solid var(--accent);
       outline-offset: 1px;
     }
-    .bg-swatch.paper { --swatch: #fafaf7; }
-    .bg-swatch.board { --swatch: #1c211c; }
+    .bg-swatch.paper { --swatch: #f4f0e6; }
+    .bg-swatch.board { --swatch: #0b2540; }
     .dock-style .label,
     .dock-eraser .label,
     .dock-export .label {
@@ -572,7 +607,7 @@
         max-height: 42vh;
       }
       .swatches { grid-template-columns: repeat(6, 22px); }
-      .brand { font-size: 1rem; left: 14px; top: 12px; }
+      .brand { left: 12px; top: 10px; }
       .dock-meta { max-width: 42vw; }
     }
   </style>
@@ -581,7 +616,13 @@
   <canvas id="board"></canvas>
   <canvas id="overlay" aria-hidden="true"></canvas>
 
-  <div class="brand">apeSketch</div>
+  <div class="brand">
+    <img src="/brand/logo-mark.png" alt="" width="44" height="44" />
+    <div class="brand-text">
+      <span class="brand-name">apeSketch</span>
+      <span class="brand-tag">Ink bridge</span>
+    </div>
+  </div>
 
   <nav class="dock dock-tools" aria-label="Tools">
     <button type="button" id="btn-pen" class="active" title="Pen (B) · double-click for style">
@@ -645,7 +686,7 @@
     <div class="label">Ink</div>
     <div class="swatches" id="color-swatches">
       <button type="button" class="swatch active" data-color="#000000" title="Black" style="--swatch:#000000"></button>
-      <button type="button" class="swatch" data-color="#c62828" title="Red" style="--swatch:#c62828"></button>
+      <button type="button" class="swatch" data-color="#c64a1a" title="Terracotta" style="--swatch:#c64a1a"></button>
       <button type="button" class="swatch" data-color="#1565c0" title="Blue" style="--swatch:#1565c0"></button>
       <button type="button" class="swatch" data-color="#001199" title="Blue-violet #001199" style="--swatch:#001199"></button>
       <button type="button" class="swatch" data-color="#ffffff" title="White" style="--swatch:#ffffff"></button>
@@ -659,8 +700,8 @@
     <div class="sep" aria-hidden="true"></div>
     <div class="label">Board</div>
     <div class="bg-row">
-      <button type="button" class="bg-swatch paper active" id="btn-bg-paper" data-bg="#fafaf7" title="Paper"></button>
-      <button type="button" class="bg-swatch board" id="btn-bg-board" data-bg="#1c211c" title="Blackboard"></button>
+      <button type="button" class="bg-swatch paper active" id="btn-bg-paper" data-bg="#f4f0e6" title="Paper"></button>
+      <button type="button" class="bg-swatch board" id="btn-bg-board" data-bg="#0b2540" title="Navy board"></button>
     </div>
   </aside>
 

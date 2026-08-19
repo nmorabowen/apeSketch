@@ -47,7 +47,7 @@ host = [
 apeSketch = "apeSketch.host.server:main"
 
 [project.urls]
-Homepage = "https://github.com/nmorabowen/apeSketch"
+Homepage = "https://nmorabowen.github.io/apeSketch/"
 Repository = "https://github.com/nmorabowen/apeSketch"
 Issues = "https://github.com/nmorabowen/apeSketch/issues"
 
@@ -59,7 +59,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "apeSketch" = ["py.typed"]
-"apeSketch.host" = ["static/*"]
+"apeSketch.host" = ["static/*", "static/fonts/*"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
