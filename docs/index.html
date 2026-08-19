@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>apeSketch — ink bridge</title>
+  <meta name="description" content="Hand-ink bridge for the ape* structural toolchain. Capture sketches, keep a Session Document, export for agents and apeCAD." />
+  <link rel="icon" href="assets/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="assets/favicon-32.png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+  <meta property="og:title" content="apeSketch" />
+  <meta property="og:description" content="Hand-ink bridge for the ape* structural toolchain." />
+  <meta property="og:image" content="assets/og.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@700&amp;family=IBM+Plex+Mono:wght@400;600&amp;display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --paper: #f4f0e6;
+      --paper-alt: #ede7d6;
+      --ink: #101820;
+      --accent: #c64a1a;
+      --muted: rgba(16, 24, 32, 0.55);
+      --hair: rgba(16, 24, 32, 0.18);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      min-height: 100vh;
+      color: var(--ink);
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(var(--hair) 1px, transparent 1px),
+        linear-gradient(90deg, var(--hair) 1px, transparent 1px);
+      background-size: 72px 72px;
+      background-position: center;
+      font: 16px/1.5 "Segoe UI", system-ui, sans-serif;
+    }
+    main {
+      width: min(720px, calc(100% - 32px));
+      margin: 48px auto;
+      background: var(--paper);
+      border: 1px solid var(--hair);
+      padding: 40px 36px 32px;
+      position: relative;
+      box-shadow: 0 18px 40px rgba(16, 24, 32, 0.08);
+    }
+    main::before, main::after {
+      content: "";
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      border: 1px solid var(--accent);
+      pointer-events: none;
+    }
+    main::before { top: 10px; left: 10px; border-right: 0; border-bottom: 0; }
+    main::after { bottom: 10px; right: 10px; border-left: 0; border-top: 0; }
+    .lockup {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      margin-bottom: 28px;
+    }
+    .lockup img.mark {
+      width: 180px;
+      height: 180px;
+      display: block;
+    }
+    h1 {
+      margin: 12px 0 0;
+      font-family: "Archivo Narrow", sans-serif;
+      font-size: 2.6rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+    .tag {
+      margin: 10px 0 0;
+      font-family: "Archivo Narrow", sans-serif;
+      font-size: 0.75rem;
+      letter-spacing: 0.32em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .lead {
+      margin: 0 auto 28px;
+      max-width: 36em;
+      text-align: center;
+      color: var(--muted);
+    }
+    pre {
+      margin: 0 auto 28px;
+      width: min(100%, 28rem);
+      padding: 14px 16px;
+      background: var(--paper-alt);
+      border: 1px solid var(--hair);
+      overflow: auto;
+      font: 600 0.92rem/1.45 "IBM Plex Mono", ui-monospace, monospace;
+    }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+    }
+    a.btn {
+      border: 1px solid var(--hair);
+      color: var(--ink);
+      padding: 8px 14px;
+      text-decoration: none;
+      font: 700 0.85rem/1 "Archivo Narrow", sans-serif;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    a.btn:hover { border-color: var(--accent); color: var(--accent); }
+    a.btn.primary { border-color: var(--accent); color: var(--accent); }
+    footer {
+      margin-top: 28px;
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    footer a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="lockup">
+      <img class="mark" src="assets/mark.png" width="180" height="180" alt="apeSketch mark" />
+      <h1>apeSketch</h1>
+      <p class="tag">Ink bridge</p>
+    </div>
+    <p class="lead">
+      Hand-ink bridge for the ape* structural toolchain. Capture freehand
+      sketches, keep a Session Document as source of truth, and export for
+      agents and later apeCAD.
+    </p>
+    <pre>pip install apeSketch
+python -m apeSketch</pre>
+    <nav>
+      <a class="btn primary" href="https://github.com/nmorabowen/apeSketch">GitHub</a>
+      <a class="btn" href="https://pypi.org/project/apeSketch/">PyPI</a>
+      <a class="btn" href="https://github.com/nmorabowen/apeSketch/blob/master/AProjects/adrs/0002-ink-bridge-scratchpad.md">ADR 0002</a>
+    </nav>
+    <footer>
+      MIT · pre-alpha · <a href="https://github.com/nmorabowen/apeSketch">nmorabowen/apeSketch</a>
+    </footer>
+  </main>
+</body>
+</html>
