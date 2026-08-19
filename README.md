@@ -1,6 +1,21 @@
-# apeSketch
+<p align="center">
+  <img src="assets/logo/lockup-horizontal.png" width="720" alt="apeSketch — ink bridge">
+</p>
 
-Hand-ink bridge for the ape* structural toolchain.
+<p align="center">
+  <strong>Hand-ink bridge for the ape* structural toolchain.</strong><br>
+  Tablet in. Session Document out. Agents and apeCAD read the same page.
+</p>
+
+<p align="center">
+  <a href="https://nmorabowen.github.io/apeSketch/">Site</a>
+  ·
+  <a href="AProjects/">AProjects</a>
+  ·
+  MIT · pre-alpha
+</p>
+
+---
 
 apeSketch is a **standalone Python library**. It records freehand
 sketches (drawing tablet or Wi-Fi client), keeps a Session Document as
@@ -72,6 +87,7 @@ src/apeSketch/       public Python package
   ops.py             typed Ops
   session.py         SketchSession
   host/              LAN HTTP + WS + static board
+docs/                GitHub Pages
 tests/
 ```
 

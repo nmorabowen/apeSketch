@@ -61,7 +61,7 @@
   let inkTip = "round";
   let inkColor = "#000000";
   let inkWidth = 2.5;
-  let pageBackground = "#fafaf7";
+  let pageBackground = "#f4f0e6";
   let styleDockOpen = false;
   let eraserDockOpen = false;
   let textDockOpen = false;
@@ -708,13 +708,13 @@
   }
 
   function applyChromeTheme(color) {
-    const hex = normalizeHex(color) || "#fafaf7";
+    const hex = normalizeHex(color) || "#f4f0e6";
     document.documentElement.style.setProperty("--paper", hex);
     document.body.classList.toggle("theme-dark", isDarkBackground(hex));
   }
 
   function applyPageBackground(color) {
-    const hex = normalizeHex(color) || "#fafaf7";
+    const hex = normalizeHex(color) || "#f4f0e6";
     pageBackground = hex;
     const page =
       documentState &&
@@ -759,7 +759,7 @@
   }
 
   function setBackground(color) {
-    const hex = normalizeHex(color) || "#fafaf7";
+    const hex = normalizeHex(color) || "#f4f0e6";
     sendOp({ op: "set_background", color: hex, page_id: "p0" });
   }
 
@@ -2676,7 +2676,7 @@
       documentState && documentState.pages
         ? documentState.pages[documentState.active_page_id || "p0"]
         : null;
-    pageBackground = (page && page.background) || pageBackground || "#fafaf7";
+    pageBackground = (page && page.background) || pageBackground || "#f4f0e6";
     ctx.fillStyle = pageBackground;
     ctx.fillRect(0, 0, screenW, screenH);
 
@@ -4352,7 +4352,7 @@
     btn.onclick = () => setInkColor(btn.getAttribute("data-color") || "#000000");
   }
   for (const btn of document.querySelectorAll(".bg-swatch")) {
-    btn.onclick = () => setBackground(btn.getAttribute("data-bg") || "#fafaf7");
+    btn.onclick = () => setBackground(btn.getAttribute("data-bg") || "#f4f0e6");
   }
   if (inkWidthInput) {
     inkWidthInput.oninput = () => setInkWidth(inkWidthInput.value);

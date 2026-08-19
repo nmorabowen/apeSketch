@@ -390,7 +390,7 @@ class Page:
     page_id: str
     width: float = 1280.0
     height: float = 800.0
-    background: str = "#fafaf7"
+    background: str = "#f4f0e6"
     strokes: dict[str, Stroke] = field(default_factory=dict)
     stroke_order: list[str] = field(default_factory=list)
     images: dict[str, ImageObject] = field(default_factory=dict)
@@ -419,7 +419,7 @@ class Page:
             raise ValueError("page_id must be a non-empty string")
         width = data.get("width", 1280.0)
         height = data.get("height", 800.0)
-        background = data.get("background", "#fafaf7")
+        background = data.get("background", "#f4f0e6")
         if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
             raise ValueError("page width/height must be numbers")
         if not isinstance(background, str) or background == "":

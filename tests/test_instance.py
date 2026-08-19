@@ -108,6 +108,21 @@ def test_api_host_reports_instance_root(tmp_path: Path) -> None:
         _stop(http, paths.root)
 
 
+def test_brand_favicon_is_served(tmp_path: Path) -> None:
+    http, paths = _start(tmp_path / "brand", 0)
+    try:
+        port = http.server_address[1]
+        with _OPENER.open(f"http://127.0.0.1:{port}/favicon.ico", timeout=2) as resp:
+            assert resp.status == 200
+            body = resp.read()
+        assert body[:4] == b"\x00\x00\x01\x00" or body[:8] == b"\x89PNG\r\n\x1a\n"
+        with _OPENER.open(f"http://127.0.0.1:{port}/brand/logo-mark.png", timeout=2) as resp:
+            assert resp.status == 200
+            assert resp.read()[:8] == b"\x89PNG\r\n\x1a\n"
+    finally:
+        _stop(http, paths.root)
+
+
 def test_second_instance_binds_another_port(tmp_path: Path) -> None:
     http_a, paths_a = _start(tmp_path / "a", 0)
     try:

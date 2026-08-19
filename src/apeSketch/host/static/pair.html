@@ -4,109 +4,181 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>apeSketch pair</title>
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/brand/favicon-32.png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <style>
     :root {
-      --bg: #f4f2ec;
-      --ink: #1a1a1a;
-      --line: #cfcabe;
-      --accent: #2f5d50;
-      --card: #fff;
+      --paper: #f4f0e6;
+      --paper-alt: #ede7d6;
+      --ink: #101820;
+      --cream: #f4eee1;
+      --navy: #0b2540;
+      --accent: #c64a1a;
+      --muted: rgba(16, 24, 32, 0.55);
+      --hair: rgba(16, 24, 32, 0.18);
+    }
+    @font-face {
+      font-family: "Archivo Narrow";
+      src: url("/brand/fonts/ArchivoNarrow-Bold.ttf") format("truetype");
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
     }
     * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
     body {
-      margin: 0;
       min-height: 100vh;
       font: 16px/1.45 "Segoe UI", system-ui, sans-serif;
-      background: var(--bg);
       color: var(--ink);
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(var(--hair) 1px, transparent 1px),
+        linear-gradient(90deg, var(--hair) 1px, transparent 1px);
+      background-size: 72px 72px;
+      background-position: center center;
       display: grid;
       place-items: center;
-      padding: 24px;
+      padding: 28px 16px;
     }
     main {
-      width: min(440px, 100%);
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 28px 24px 24px;
+      width: min(420px, 100%);
+      background: var(--paper);
+      border: 1px solid var(--hair);
+      padding: 28px 24px 22px;
+      position: relative;
+      box-shadow: 0 18px 40px rgba(16, 24, 32, 0.08);
     }
-    h1 {
-      margin: 0 0 8px;
-      font-size: 1.35rem;
-      font-weight: 650;
+    main::before,
+    main::after {
+      content: "";
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border: 1px solid var(--accent);
+      pointer-events: none;
+    }
+    main::before { top: 8px; left: 8px; border-right: 0; border-bottom: 0; }
+    main::after { bottom: 8px; right: 8px; border-left: 0; border-top: 0; }
+
+    .lockup {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      margin: 4px 0 18px;
+    }
+    .lockup img {
+      width: 168px;
+      height: 168px;
+      display: block;
+      background: var(--paper);
+    }
+    .lockup h1 {
+      margin: 10px 0 0;
+      font-family: "Archivo Narrow", "Segoe UI", system-ui, sans-serif;
+      font-size: 2.15rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      line-height: 1;
+    }
+    .lockup .tag {
+      margin: 8px 0 0;
+      font-family: "Archivo Narrow", "Segoe UI", system-ui, sans-serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.32em;
+      text-transform: uppercase;
+      color: var(--accent);
     }
     .lead {
-      margin: 0 0 20px;
-      color: #555;
-      font-size: 0.95rem;
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 0.92rem;
+      text-align: center;
     }
     .room {
       display: flex;
       align-items: baseline;
+      justify-content: center;
       gap: 10px;
-      margin-bottom: 18px;
+      margin-bottom: 16px;
     }
     .room-label {
-      font-size: 0.8rem;
-      letter-spacing: 0.04em;
+      font-family: "Archivo Narrow", sans-serif;
+      font-size: 0.72rem;
+      letter-spacing: 0.28em;
       text-transform: uppercase;
-      color: #666;
+      color: var(--muted);
     }
     .room-code {
-      font: 700 1.75rem/1 ui-monospace, "Cascadia Mono", Consolas, monospace;
-      letter-spacing: 0.12em;
+      font: 700 1.7rem/1 "Archivo Narrow", "Segoe UI", sans-serif;
+      letter-spacing: 0.14em;
       color: var(--accent);
     }
-    .qr-wrap {
+    .qr-ring {
+      width: 268px;
+      height: 268px;
+      margin: 0 auto 16px;
+      border: 1.5px solid var(--accent);
+      border-radius: 50%;
       display: grid;
       place-items: center;
-      padding: 16px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: #fafaf7;
-      margin-bottom: 16px;
-      min-height: 280px;
+      position: relative;
+      background: var(--paper);
     }
-    .qr-wrap img {
-      width: 240px;
-      height: 240px;
-      image-rendering: pixelated;
+    .qr-ring::before,
+    .qr-ring::after {
+      content: "";
+      position: absolute;
+      background: var(--accent);
+      pointer-events: none;
     }
-    .qr-wrap .err {
-      color: #8a3b2b;
+    .qr-ring::before { width: 1px; height: 12px; top: -1px; left: 50%; transform: translateX(-50%); }
+    .qr-ring::after { width: 12px; height: 1px; left: -1px; top: 50%; transform: translateY(-50%); }
+    #qr-wrap {
+      display: grid;
+      place-items: center;
+      width: 216px;
+      height: 216px;
+    }
+    #qr-wrap svg, #qr-wrap img {
+      width: 216px;
+      height: 216px;
+      display: block;
+    }
+    #qr-wrap .err {
+      color: var(--accent);
       text-align: center;
-      font-size: 0.9rem;
-      padding: 12px;
+      font-size: 0.85rem;
+      padding: 8px;
     }
     .meta {
-      font-size: 0.9rem;
-      color: #444;
+      font-size: 0.82rem;
+      color: var(--muted);
       word-break: break-all;
+      text-align: center;
     }
     .meta a { color: var(--accent); }
     .top-bar {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 12px;
+      position: absolute;
+      top: 14px;
+      left: 14px;
     }
     .back {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 40px;
-      height: 40px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #fff;
+      width: 36px;
+      height: 36px;
+      border: 1px solid var(--hair);
+      background: var(--paper);
       color: var(--ink);
       text-decoration: none;
-      flex-shrink: 0;
     }
     .back:hover { border-color: var(--accent); color: var(--accent); }
     .back svg {
-      width: 20px;
-      height: 20px;
+      width: 18px;
+      height: 18px;
       fill: none;
       stroke: currentColor;
       stroke-width: 1.8;
@@ -117,32 +189,33 @@
       display: flex;
       gap: 8px;
       flex-wrap: wrap;
+      justify-content: center;
       margin-top: 16px;
     }
     button, .btn {
-      border: 1px solid var(--line);
-      background: #fff;
+      border: 1px solid var(--hair);
+      background: var(--paper);
       color: var(--ink);
       padding: 8px 12px;
-      border-radius: 4px;
       cursor: pointer;
-      font: inherit;
+      font: 650 0.85rem/1 "Archivo Narrow", "Segoe UI", sans-serif;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
       text-decoration: none;
     }
-    button:hover, .btn:hover { border-color: var(--accent); }
+    button:hover, .btn:hover { border-color: var(--accent); color: var(--accent); }
     details {
-      margin-top: 18px;
-      color: #666;
-      font-size: 0.85rem;
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 0.8rem;
     }
     pre {
       margin: 8px 0 0;
       padding: 10px;
-      background: #f7f5ef;
-      border: 1px solid var(--line);
-      border-radius: 4px;
+      background: var(--paper-alt);
+      border: 1px solid var(--hair);
       overflow: auto;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
     }
   </style>
 </head>
@@ -152,15 +225,21 @@
       <a class="back" id="back-board" href="/" title="Back to board" aria-label="Back to board">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/><path d="M9 12h11"/></svg>
       </a>
-      <h1 style="margin:0">apeSketch pair</h1>
     </div>
-    <p class="lead">Scan with your phone (same Wi‑Fi or hotspot) to open this board.</p>
+    <div class="lockup">
+      <img src="/brand/mark.png" alt="" width="168" height="168" />
+      <h1>apeSketch</h1>
+      <p class="tag">Ink bridge</p>
+    </div>
+    <p class="lead">Scan with your phone (same Wi‑Fi) to open this board.</p>
     <div class="room">
       <span class="room-label">Room</span>
       <span class="room-code" id="room">…</span>
     </div>
-    <div class="qr-wrap" id="qr-wrap">
-      <span class="err">Loading QR…</span>
+    <div class="qr-ring">
+      <div id="qr-wrap">
+        <span class="err">Loading QR…</span>
+      </div>
     </div>
     <div class="meta">
       Board: <a id="board" href="#">…</a>
@@ -197,8 +276,8 @@
           qrWrap.innerHTML = svg;
           const el = qrWrap.querySelector("svg");
           if (el) {
-            el.setAttribute("width", "240");
-            el.setAttribute("height", "240");
+            el.setAttribute("width", "216");
+            el.setAttribute("height", "216");
             el.style.display = "block";
           }
         })
@@ -242,7 +321,6 @@
 
     document.getElementById("refresh-qr").onclick = () => loadPair();
     document.getElementById("back-board").onclick = (ev) => {
-      // Prefer returning to the opener tab when Pair was opened from the board.
       if (window.opener && !window.opener.closed) {
         ev.preventDefault();
         window.opener.focus();

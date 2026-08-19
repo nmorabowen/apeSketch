@@ -83,7 +83,7 @@ def test_erase_and_clear() -> None:
 
 def test_ink_kinds_and_background() -> None:
     doc = Document()
-    assert doc.page().background == "#fafaf7"
+    assert doc.page().background == "#f4f0e6"
     doc.apply(SetBackground(color="#1c211c"))
     assert doc.page().background == "#1c211c"
 

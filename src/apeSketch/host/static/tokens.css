@@ -1,0 +1,11 @@
+/* apeSketch brand tokens — from assets/logo */
+:root {
+  --ape-paper: #f4f0e6;
+  --ape-paper-alt: #ede7d6;
+  --ape-ink: #101820;
+  --ape-cream: #f4eee1;
+  --ape-navy: #0b2540;
+  --ape-accent: #c64a1a;
+  --ape-muted: rgba(16, 24, 32, 0.55);
+  --ape-hair: rgba(16, 24, 32, 0.18);
+}
