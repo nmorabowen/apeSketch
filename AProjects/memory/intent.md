@@ -20,4 +20,4 @@ agents and for the ape* toolchain.
 - [0002](../adrs/0002-ink-bridge-scratchpad.md) — product role
 - [0003](../adrs/0003-python-document-clients.md) — Python authority
 - [0004](../adrs/0004-lan-session-host.md) — LAN Session host
-- [0005](../adrs/0005-own-core-adopt-patterns.md) — own core, adopt patterns
+- [0007](../adrs/0007-instance-scoped-host.md) — one host per instance root

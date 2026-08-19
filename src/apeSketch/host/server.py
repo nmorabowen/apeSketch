@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import socket
 import threading
 import webbrowser
@@ -19,18 +20,28 @@ from urllib.parse import parse_qs, urlparse
 from apeSketch.assets import AssetStore
 from apeSketch.document import Document
 from apeSketch.errors import DocumentError
+from apeSketch.host.instance import (
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    HostStamp,
+    InstancePaths,
+    clear_stamp,
+    iter_http_ports,
+    iter_ws_ports,
+    live_host,
+    resolve_instance,
+    wait_until_up,
+    write_stamp,
+)
 from apeSketch.host.perf_store import append_sample, summarize
 from apeSketch.host.qr_svg import board_qr_svg
 from apeSketch.host.session_store import SessionStore
 from apeSketch.session import SketchSession
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_HOST = "0.0.0.0"
-# Keep clear of apeCAD scratchpad (8765).
-DEFAULT_PORT = 9966
-ASSET_DIR = REPO_ROOT / ".apeSketch" / "assets"
-SESSIONS_DIR = REPO_ROOT / ".apeSketch" / "sessions"
+# Workbench may assign these before calling main(); otherwise resolve_instance.
+SESSIONS_DIR: Path | None = None
+ASSET_DIR: Path | None = None
 AUTOSAVE_DELAY_S = 0.8
 
 
@@ -44,6 +55,11 @@ def _lan_ip() -> str:
 
 
 class SessionHttpServer(ThreadingHTTPServer):
+    # Exclusive bind so a second instance cannot share a port (ADR 0007).
+    allow_reuse_address = False
+    daemon_threads = True
+    block_on_close = False
+
     def __init__(
         self,
         address: tuple[str, int],
@@ -52,15 +68,32 @@ class SessionHttpServer(ThreadingHTTPServer):
         advertise_host: str,
         ws_port: int,
         store: SessionStore,
+        instance: InstancePaths,
+        http_only: bool = False,
     ) -> None:
         self.session = session
         self.advertise_host = advertise_host
         self.ws_port = ws_port
         self.store = store
+        self.instance = instance
+        self.http_only = http_only
         self._autosave_timer: threading.Timer | None = None
         self._autosave_lock = threading.Lock()
         super().__init__(address, SessionHttpHandler)
+        self.timeout = 0.5
         session.on_change(lambda _msg: self.schedule_autosave())
+
+    def host_payload(self) -> dict[str, Any]:
+        return {
+            "pid": os.getpid(),
+            "root": str(self.instance.root),
+            "sessions": str(self.instance.sessions),
+            "assets": str(self.instance.assets),
+            "http_port": int(self.server_address[1]),
+            "ws_port": self.ws_port,
+            "advertise_host": self.advertise_host,
+            "http_only": self.http_only,
+        }
 
     def session_payload(self) -> dict[str, Any]:
         return {
@@ -134,6 +167,7 @@ class SessionHttpServer(ThreadingHTTPServer):
 
 class SessionHttpHandler(BaseHTTPRequestHandler):
     server: SessionHttpServer  # type: ignore[assignment]
+    protocol_version = "HTTP/1.0"
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -146,6 +180,7 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+        self.close_connection = True
         if path in ("/", "/index.html", "/board.html"):
             self._send_file(
                 STATIC_DIR / "board.html",
@@ -167,6 +202,9 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
                 no_store=True,
             )
             return
+        if path == "/api/host":
+            self._send_json(200, self.server.host_payload())
+            return
         if path == "/api/snapshot":
             self._send_json(200, self.server.session.snapshot_message())
             return
@@ -187,7 +225,7 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             self._send_json(200, info)
             return
         if path == "/api/perf/summary":
-            self._send_json(200, summarize(root=REPO_ROOT))
+            self._send_json(200, summarize(directory=self.server.instance.perf))
             return
         if path.startswith("/api/asset/"):
             asset_id = path[len("/api/asset/") :].strip("/")
@@ -263,7 +301,7 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/perf":
             try:
                 payload = self._read_json_object()
-                meta = append_sample(payload, root=REPO_ROOT)
+                meta = append_sample(payload, directory=self.server.instance.perf)
                 self._send_json(200, meta)
             except DocumentError as exc:
                 self._send_json(400, {"error": str(exc)})
@@ -445,6 +483,7 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             self.send_header("Pragma", "no-cache")
         self.end_headers()
         self.wfile.write(data)
+        self.wfile.flush()
 
     def _send_json(self, status: int, payload: dict[str, Any]) -> None:
         raw = json.dumps(payload).encode("utf-8")
@@ -454,6 +493,8 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
         self.wfile.write(raw)
+        self.wfile.flush()
+        self.close_connection = True
 
 
 async def _ws_handler(websocket: Any, session: SketchSession) -> None:
@@ -552,7 +593,13 @@ async def _ws_handler(websocket: Any, session: SketchSession) -> None:
         session.unsubscribe(on_message)
 
 
-async def _run_ws(session: SketchSession, host: str, port: int) -> None:
+async def _run_ws(
+    session: SketchSession,
+    host: str,
+    port: int,
+    *,
+    on_bound: Any | None = None,
+) -> None:
     try:
         from websockets.asyncio.server import serve
     except ImportError as exc:
@@ -561,8 +608,20 @@ async def _run_ws(session: SketchSession, host: str, port: int) -> None:
     async def handler(websocket: Any) -> None:
         await _ws_handler(websocket, session)
 
-    async with serve(handler, host, port):
-        await asyncio.Future()
+    last_error: OSError | None = None
+    for candidate in iter_ws_ports(port):
+        try:
+            async with serve(handler, host, candidate) as server:
+                sockets = getattr(server, "sockets", None) or []
+                bound = int(sockets[0].getsockname()[1]) if sockets else int(candidate)
+                if on_bound is not None:
+                    on_bound(bound)
+                await asyncio.Future()
+                return
+        except OSError as exc:
+            last_error = exc
+            continue
+    raise OSError(f"no free WebSocket port starting at {port}") from last_error
 
 
 def _resolve_startup_document(
@@ -586,11 +645,107 @@ def _resolve_startup_document(
     return Document(), None, "Untitled"
 
 
+def _bind_http(
+    host: str,
+    preferred_port: int,
+    session: SketchSession,
+    *,
+    advertise_host: str,
+    ws_port: int,
+    store: SessionStore,
+    instance: InstancePaths,
+    http_only: bool,
+) -> SessionHttpServer:
+    last_error: OSError | None = None
+    for port in iter_http_ports(preferred_port):
+        try:
+            return SessionHttpServer(
+                (host, port),
+                session,
+                advertise_host=advertise_host,
+                ws_port=ws_port,
+                store=store,
+                instance=instance,
+                http_only=http_only,
+            )
+        except OSError as exc:
+            last_error = exc
+            continue
+    raise OSError(
+        f"no free HTTP port starting at {preferred_port} — another instance "
+        "holds the preferred pair; tried the next ports"
+    ) from last_error
+
+
+def _write_live_stamp(
+    paths: InstancePaths,
+    http: SessionHttpServer,
+    *,
+    advertise_host: str,
+) -> None:
+    write_stamp(
+        paths.stamp,
+        HostStamp(
+            pid=os.getpid(),
+            http_port=int(http.server_address[1]),
+            ws_port=int(http.ws_port),
+            root=str(paths.root),
+            advertise_host=advertise_host,
+            http_only=http.http_only,
+        ),
+    )
+
+
+def _print_banner(
+    session: SketchSession,
+    paths: InstancePaths,
+    *,
+    advertise_host: str,
+    http_port: int,
+    http_only: bool,
+) -> None:
+    board_url = f"http://{advertise_host}:{http_port}/"
+    print(f"apeSketch board    {board_url}", flush=True)
+    print(f"apeSketch instance {paths.root}", flush=True)
+    print(f"apeSketch pair     http://{advertise_host}:{http_port}/pair", flush=True)
+    print(f"apeSketch room     {session.room_code}", flush=True)
+    if session.session_id:
+        print(
+            f"apeSketch session  {session.session_id} · {session.session_title}",
+            flush=True,
+        )
+    else:
+        print(f"apeSketch sessions {paths.sessions}", flush=True)
+    if http_only:
+        print("apeSketch mode     HTTP only (no WS)", flush=True)
+
+
+def _attach_existing(stamp: HostStamp, paths: InstancePaths, *, no_browser: bool) -> None:
+    print(f"apeSketch attach   http://127.0.0.1:{stamp.http_port}/", flush=True)
+    print(f"apeSketch instance {paths.root}", flush=True)
+    print(f"apeSketch pid      {stamp.pid}", flush=True)
+    if stamp.advertise_host and stamp.advertise_host not in ("127.0.0.1", "0.0.0.0"):
+        print(
+            f"apeSketch board    http://{stamp.advertise_host}:{stamp.http_port}/",
+            flush=True,
+        )
+    if not no_browser:
+        webbrowser.open(f"http://127.0.0.1:{stamp.http_port}/")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="apeSketch ink Session host")
     parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help="preferred HTTP port (0 = ephemeral; busy preferred pair uses the next)",
+    )
     parser.add_argument("--ws-port", type=int, default=None, help="defaults to HTTP port + 1")
+    parser.add_argument("--root", default=None, help="instance directory (sessions/assets/perf)")
+    parser.add_argument("--sessions", default=None, help="session library directory")
+    parser.add_argument("--assets", default=None, help="asset directory")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument(
         "--http-only",
@@ -609,63 +764,89 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    store = SessionStore(SESSIONS_DIR)
+    paths = resolve_instance(
+        root=args.root,
+        sessions=args.sessions or SESSIONS_DIR,
+        assets=args.assets or ASSET_DIR,
+    )
+    existing = live_host(paths)
+    if existing is not None:
+        _attach_existing(existing, paths, no_browser=args.no_browser)
+        return
+
+    store = SessionStore(paths.sessions)
     document, session_id, session_title = _resolve_startup_document(
         store,
         load=args.load,
         resume=args.resume,
     )
-    session = SketchSession(document, assets=AssetStore(ASSET_DIR))
+    session = SketchSession(document, assets=AssetStore(paths.assets))
     session.bind_session(session_id, session_title)
-    http_port = args.port
-    ws_port = args.ws_port if args.ws_port is not None else http_port + 1
     advertise = _lan_ip()
+    planned_ws = args.ws_port if args.ws_port is not None else (
+        0 if args.port == 0 else args.port + 1
+    )
 
-    http = SessionHttpServer(
-        (args.host, http_port),
+    http = _bind_http(
+        args.host,
+        args.port,
         session,
         advertise_host=advertise,
-        ws_port=ws_port,
+        ws_port=planned_ws,
         store=store,
+        instance=paths,
+        http_only=args.http_only,
     )
-    thread = threading.Thread(target=http.serve_forever, daemon=True)
-    thread.start()
-
-    board_url = f"http://{advertise}:{http_port}/"
-    print(f"apeSketch board  {board_url}", flush=True)
-    print(f"apeSketch pair   http://{advertise}:{http_port}/pair", flush=True)
-    print(f"apeSketch room   {session.room_code}", flush=True)
-    if session.session_id:
-        print(
-            f"apeSketch session {session.session_id} · {session.session_title}",
-            flush=True,
-        )
-    else:
-        print(f"apeSketch sessions {SESSIONS_DIR}", flush=True)
+    http_port = int(http.server_address[1])
+    if args.ws_port is None:
+        http.ws_port = 0 if args.port == 0 else http_port + 1
+    _thread = threading.Thread(target=http.serve_forever, daemon=True)
+    _thread.start()
+    if not wait_until_up(http_port):
+        http.shutdown()
+        http.server_close()
+        raise OSError(f"apeSketch HTTP host did not answer on port {http_port}")
+    _write_live_stamp(paths, http, advertise_host=advertise)
+    _print_banner(
+        session,
+        paths,
+        advertise_host=advertise,
+        http_port=http_port,
+        http_only=args.http_only,
+    )
 
     if not args.no_browser:
         webbrowser.open(f"http://127.0.0.1:{http_port}/")
 
+    def shutdown() -> None:
+        http.flush_autosave()
+        clear_stamp(paths.stamp)
+        http.shutdown()
+        http.server_close()
+
     if args.http_only:
-        print("apeSketch mode   HTTP only (no WS)", flush=True)
         try:
             threading.Event().wait()
         except KeyboardInterrupt:
             pass
         finally:
-            http.flush_autosave()
-            http.shutdown()
+            shutdown()
         return
 
-    pair = session.pair_info(host=advertise, port=ws_port)
-    print(f"apeSketch ws     {pair['ws']}", flush=True)
+    def on_ws_bound(bound: int) -> None:
+        http.ws_port = bound
+        _write_live_stamp(paths, http, advertise_host=advertise)
+        pair = session.pair_info(host=advertise, port=bound)
+        print(f"apeSketch ws       {pair['ws']}", flush=True)
+
     try:
-        asyncio.run(_run_ws(session, args.host, ws_port))
+        asyncio.run(
+            _run_ws(session, args.host, http.ws_port, on_bound=on_ws_bound)
+        )
     except KeyboardInterrupt:
         pass
     finally:
-        http.flush_autosave()
-        http.shutdown()
+        shutdown()
 
 
 if __name__ == "__main__":

@@ -13,9 +13,12 @@ DEFAULT_PERF_DIR = Path(".apeSketch") / "perf"
 _lock = threading.Lock()
 
 
-def perf_dir(root: Path | None = None) -> Path:
-    base = root if root is not None else Path.cwd()
-    path = base / DEFAULT_PERF_DIR
+def perf_dir(root: Path | None = None, *, directory: Path | None = None) -> Path:
+    if directory is not None:
+        path = directory
+    else:
+        base = root if root is not None else Path.cwd()
+        path = base / DEFAULT_PERF_DIR
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -25,9 +28,14 @@ def _day_file(directory: Path) -> Path:
     return directory / f"board-{day}.jsonl"
 
 
-def append_sample(sample: dict[str, Any], *, root: Path | None = None) -> dict[str, Any]:
+def append_sample(
+    sample: dict[str, Any],
+    *,
+    root: Path | None = None,
+    directory: Path | None = None,
+) -> dict[str, Any]:
     """Append one telemetry sample. Returns storage metadata."""
-    directory = perf_dir(root)
+    directory = perf_dir(root, directory=directory)
     path = _day_file(directory)
     record = {
         "received_at": datetime.now(timezone.utc).isoformat(),
@@ -46,9 +54,14 @@ def _safe_float(value: object, default: float = 0.0) -> float:
     return default
 
 
-def summarize(limit: int = 200, *, root: Path | None = None) -> dict[str, Any]:
+def summarize(
+    limit: int = 200,
+    *,
+    root: Path | None = None,
+    directory: Path | None = None,
+) -> dict[str, Any]:
     """Rolling summary over the newest samples in today's JSONL (and yesterday if thin)."""
-    directory = perf_dir(root)
+    directory = perf_dir(root, directory=directory)
     files = sorted(directory.glob("board-*.jsonl"), reverse=True)
     rows: list[dict[str, Any]] = []
     for path in files:
