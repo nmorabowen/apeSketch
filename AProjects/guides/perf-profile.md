@@ -27,7 +27,7 @@ Monitoring keeps running even with the HUD closed.
 | Location | Contents |
 |---|---|
 | Browser `localStorage` key `apeSketch.perf.history.v1` | Last ~180 one-second samples |
-| `.apeSketch/perf/board-*.jsonl` (gitignored) | Append-only day files on the host machine |
+| `.apeSketch/perf/board-*.jsonl` (gitignored; under the instance root) | Append-only day files for that host |
 | `GET /api/perf/summary` | Rolling averages for the current day file |
 
 ## Metrics

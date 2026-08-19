@@ -1,7 +1,7 @@
 # Spec — working prototype (P0 → P3)
 
 **Status:** Planned (2026-08-14)  
-**ADRs:** 0002, 0003, 0004, 0005
+**ADRs:** 0002, 0003, 0004, 0005, 0007
 
 ## Goal
 
@@ -20,7 +20,7 @@ with a single offline canvas.
 | # | Criterion |
 |---|---|
 | 1 | `pip install -e ".[dev]"` and `pytest` pass on Document / Ops |
-| 2 | `python -m apeSketch` starts a Session on the LAN (default port **9966**) |
+| 2 | `python -m apeSketch` starts a Session on the LAN (preferred port **9966**; next free pair if busy) |
 | 3 | PC browser client draws freehand; strokes persist in Python Document |
 | 4 | Second client (phone browser on same Wi‑Fi, or second PC tab) joins via QR / short code and strokes appear on the PC session live |
 | 5 | Save / load `.apesketch.json` |
@@ -94,8 +94,8 @@ prototype (document a `units` field; mm conversion is later).
 | Piece | Notes |
 |---|---|
 | `SketchSession` | Owns one `Document`; applies Ops; keeps revision counter |
-| Host | Bind `0.0.0.0:9966` (not only localhost) so phones can join |
-| HTTP | Serve static clients; `GET /api/snapshot`; `GET /api/pair` → `{url, code, ws}` |
+| Host | Bind `0.0.0.0` on preferred **9966** (not only localhost) so phones can join; instance-scoped ([ADR 0007](../adrs/0007-instance-scoped-host.md)) |
+| HTTP | Serve static clients; `GET /api/snapshot`; `GET /api/pair` → `{url, code, ws}`; `GET /api/host` → instance stamp |
 | WebSocket | `/ws?room=<code>&token=<tok>` — clients send Ops, receive Ops + snapshots |
 | Pairing | Room code + token generated at Session start; QR encodes WS URL |
 
@@ -233,10 +233,12 @@ convenient.
 
 ## Port and conflict
 
-| App | Default |
+Preferred defaults, not machine identity ([ADR 0007](../adrs/0007-instance-scoped-host.md)):
+
+| App | Preferred |
 |---|---|
 | apeCAD scratchpad | `127.0.0.1:8765` |
-| apeSketch Session | `0.0.0.0:9966` (WS `9967`) |
+| apeSketch Session | `0.0.0.0:9966` (WS `9967`); next free pair per instance |
 
 ## Risk register
 

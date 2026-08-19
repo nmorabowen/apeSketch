@@ -17,6 +17,7 @@ This repository is **public** (MIT). Status: pre-alpha — architecture under
 | [0003](AProjects/adrs/0003-python-document-clients.md) | Python Document; clients emit Ops |
 | [0004](AProjects/adrs/0004-lan-session-host.md) | LAN Session host; Wi-Fi Direct deferred |
 | [0005](AProjects/adrs/0005-own-core-adopt-patterns.md) | Own core; adopt patterns / small MIT deps |
+| [0007](AProjects/adrs/0007-instance-scoped-host.md) | One host process per instance root; 9966 is a preferred port |
 
 ## Installation
 
@@ -30,9 +31,21 @@ Then start a Session host:
 python -m apeSketch
 ```
 
-Opens a board on port **9966** (HTTP) with WebSocket on **9967**
-(apeCAD uses 8765 — these stay separate). Pair page: `/pair`. Phone on
-the same Wi‑Fi can open the advertised board URL.
+Opens a board on a **preferred** port **9966** (HTTP) with WebSocket on
+**9967**. Those ports are a default, not machine identity: a second
+instance (another `--root` or cwd) binds the next free pair. Pair page:
+`/pair`. Phone on the same Wi‑Fi can open the advertised board URL.
+
+The host is **instance-scoped** ([ADR 0007](AProjects/adrs/0007-instance-scoped-host.md)).
+Default instance root is `./.apeSketch` in the current working directory
+(sessions, assets, perf, `host.json`). Point it at a work folder with:
+
+```bash
+python -m apeSketch --root path/to/instance
+```
+
+Workbench-shaped roots (`files/` + `pictures/`) use those folders.
+Starting the same root again attaches to the live host.
 
 HTTP-only (no WebSocket):
 
