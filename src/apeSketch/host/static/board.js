@@ -10,11 +10,13 @@
   const btnSelect = document.getElementById("btn-select");
   const btnEraseStroke = document.getElementById("btn-erase-stroke");
   const btnErasePartial = document.getElementById("btn-erase-partial");
+  const btnRule = document.getElementById("btn-rule");
   const btnText = document.getElementById("btn-text");
   const textEditor = document.getElementById("text-editor");
   const dockStyle = document.getElementById("dock-style");
   const dockSelect = document.getElementById("dock-select");
   const dockEraser = document.getElementById("dock-eraser");
+  const dockRule = document.getElementById("dock-rule");
   const dockText = document.getElementById("dock-text");
   const dockExport = document.getElementById("dock-export");
   const dockSessions = document.getElementById("dock-sessions");
@@ -58,10 +60,37 @@
   const MAX_SCALE = 8;
   const ZOOM_STEP = 1.15;
 
-  /** @type {"pen"|"erase-stroke"|"erase-partial"|"text"|"select"} */
+  /** @type {"pen"|"erase-stroke"|"erase-partial"|"text"|"select"|"rule"} */
   let tool = "pen";
   let toolBeforeEraserTip = "pen";
   let eraserTipActive = false;
+
+  const DEFAULT_RULER_LENGTH = 420;
+  const RULE_SNAP_SCREEN_PX = 16;
+  const RULER_BODY_SCREEN_PX = 52;
+
+  /**
+   * Per-client drawing rule (ADR 0009). Not synced; not in Document.
+   * @type {null | {
+   *   kind: "ruler"|"guide",
+   *   snapEnabled: boolean,
+   *   locked?: boolean,
+   *   cx?: number, cy?: number, angle?: number, length?: number,
+   *   x1?: number, y1?: number, x2?: number, y2?: number
+   * }}
+   */
+  let rule = null;
+
+  /** @type {null | {
+   *   mode: string,
+   *   startX: number, startY: number,
+   *   orig: object,
+   *   pointerId: number
+   * }} */
+  let ruleGesture = null;
+
+  let ruleDockOpen = false;
+  let inkLockedToRule = false;
 
   /** @type {"pen"|"fountain"|"chalk"} */
   let inkKind = "pen";
@@ -398,6 +427,7 @@
       textCreateDrag = null;
       scheduleOverlay();
     }
+    if (next !== "rule") ruleGesture = null;
     if (selectDrag) {
       selectDrag = null;
       scheduleOverlay();
@@ -407,13 +437,558 @@
     if (btnSelect) btnSelect.classList.toggle("active", tool === "select");
     btnEraseStroke.classList.toggle("active", tool === "erase-stroke");
     btnErasePartial.classList.toggle("active", tool === "erase-partial");
+    if (btnRule) btnRule.classList.toggle("active", tool === "rule");
     if (btnText) btnText.classList.toggle("active", tool === "text");
     if (tool === "select") setSelectDockOpen(true);
     else setSelectDockOpen(false);
     if (tool === "text") setTextDockOpen(true);
     else setTextDockOpen(false);
+    if (tool === "rule") {
+      ensureRule();
+      setSelectedImage(null);
+      setSelectedText(null);
+    } else {
+      setRuleDockOpen(false);
+    }
     updateCursor();
     scheduleOverlay();
+  }
+
+  function cloneRuleState(src) {
+    return { ...src };
+  }
+
+  function ensureRule() {
+    if (rule) return rule;
+    const c = viewportCenterWorld();
+    rule = {
+      kind: "ruler",
+      cx: c.x,
+      cy: c.y,
+      angle: 0,
+      length: DEFAULT_RULER_LENGTH,
+      snapEnabled: true,
+      locked: false,
+    };
+    scheduleOverlay();
+    return rule;
+  }
+
+  function rulerEndpoints(r) {
+    const half = r.length / 2;
+    const cos = Math.cos(r.angle);
+    const sin = Math.sin(r.angle);
+    return {
+      a: { x: r.cx - half * cos, y: r.cy - half * sin },
+      b: { x: r.cx + half * cos, y: r.cy + half * sin },
+    };
+  }
+
+  function ruleBandWorld() {
+    return RULER_BODY_SCREEN_PX / view.scale;
+  }
+
+  function snapToleranceWorld() {
+    return RULE_SNAP_SCREEN_PX / view.scale;
+  }
+
+  function rulerGeometry(r) {
+    const { a, b } = rulerEndpoints(r);
+    const ux = Math.cos(r.angle);
+    const uy = Math.sin(r.angle);
+    return {
+      a,
+      b,
+      ux,
+      uy,
+      nx: -uy,
+      ny: ux,
+      body: RULER_BODY_SCREEN_PX / view.scale,
+      length: Math.max(40, r.length),
+    };
+  }
+
+  function worldToRulerLocal(x, y, g) {
+    const dx = x - g.a.x;
+    const dy = y - g.a.y;
+    return { along: dx * g.ux + dy * g.uy, across: dx * g.nx + dy * g.ny };
+  }
+
+  function rulerCloseLocal(g) {
+    return {
+      along: g.length - 16 / view.scale,
+      across: g.body * 0.5,
+      r: 10 / view.scale,
+    };
+  }
+
+  function rulerLockLocal(g) {
+    const size = 22 / view.scale;
+    return {
+      along: g.length - 42 / view.scale,
+      across: (g.body - size) * 0.5,
+      size,
+    };
+  }
+
+  function toggleRuleLock() {
+    if (!rule) return;
+    rule.locked = !rule.locked;
+    ruleGesture = null;
+    scheduleOverlay();
+    setStatus(rule.locked ? "ruler locked" : "ruler unlocked");
+  }
+
+  function pointOnRulerInk(x, y) {
+    if (!rule) return false;
+    if (rule.kind === "ruler") {
+      const g = rulerGeometry(rule);
+      const loc = worldToRulerLocal(x, y, g);
+      const pad = snapToleranceWorld();
+      return (
+        loc.along >= -pad &&
+        loc.along <= g.length + pad &&
+        loc.across >= -pad &&
+        loc.across <= g.body + pad
+      );
+    }
+    const tol = snapToleranceWorld();
+    return distPointSeg2(x, y, rule.x1, rule.y1, rule.x2, rule.y2) <= tol * tol;
+  }
+
+  function hideRule() {
+    const wasRuleTool = tool === "rule";
+    rule = null;
+    ruleGesture = null;
+    inkLockedToRule = false;
+    setRuleDockOpen(false);
+    scheduleOverlay();
+    setStatus("ruler off");
+    if (wasRuleTool) setTool("pen");
+  }
+
+  function toggleRule() {
+    if (rule) {
+      hideRule();
+      return;
+    }
+    setTool("rule");
+    ensureRule();
+  }
+
+  function projectOntoSegment(px, py, ax, ay, bx, by) {
+    const abx = bx - ax;
+    const aby = by - ay;
+    const len2 = abx * abx + aby * aby;
+    if (len2 < 1e-9) {
+      const d2 = dist2(px, py, ax, ay);
+      return { x: ax, y: ay, dist2: d2 };
+    }
+    let t = ((px - ax) * abx + (py - ay) * aby) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const x = ax + t * abx;
+    const y = ay + t * aby;
+    return { x, y, dist2: dist2(px, py, x, y) };
+  }
+
+  function projectOntoLine(px, py, ax, ay, bx, by) {
+    const abx = bx - ax;
+    const aby = by - ay;
+    const len2 = abx * abx + aby * aby;
+    if (len2 < 1e-9) {
+      return { x: ax, y: ay, dist2: dist2(px, py, ax, ay) };
+    }
+    const t = ((px - ax) * abx + (py - ay) * aby) / len2;
+    const x = ax + t * abx;
+    const y = ay + t * aby;
+    return { x, y, dist2: dist2(px, py, x, y) };
+  }
+
+  function constrainInkPoint(p) {
+    if (!rule || !rule.snapEnabled) return p;
+    if (tool !== "pen" && !currentStrokeId) return p;
+    const glued = inkLockedToRule && currentStrokeId;
+    if (!glued && !pointOnRulerInk(p.x, p.y)) return p;
+    let proj;
+    if (rule.kind === "ruler") {
+      const { a, b } = rulerEndpoints(rule);
+      proj = projectOntoSegment(p.x, p.y, a.x, a.y, b.x, b.y);
+    } else {
+      proj = projectOntoLine(p.x, p.y, rule.x1, rule.y1, rule.x2, rule.y2);
+    }
+    inkLockedToRule = true;
+    return { ...p, x: proj.x, y: proj.y };
+  }
+
+  function syncRuleFromEndpoints(a, b) {
+    rule.cx = (a.x + b.x) / 2;
+    rule.cy = (a.y + b.y) / 2;
+    rule.angle = Math.atan2(b.y - a.y, b.x - a.x);
+    rule.length = Math.max(40, Math.hypot(b.x - a.x, b.y - a.y));
+  }
+
+  function setRuleKind(kind) {
+    ensureRule();
+    if (kind === "guide" && rule.kind === "ruler") {
+      const { a, b } = rulerEndpoints(rule);
+      rule = {
+        kind: "guide",
+        x1: a.x,
+        y1: a.y,
+        x2: b.x,
+        y2: b.y,
+        snapEnabled: rule.snapEnabled,
+        locked: !!rule.locked,
+      };
+    } else if (kind === "ruler" && rule.kind === "guide") {
+      const cx = (rule.x1 + rule.x2) / 2;
+      const cy = (rule.y1 + rule.y2) / 2;
+      const angle = Math.atan2(rule.y2 - rule.y1, rule.x2 - rule.x1);
+      const length = Math.max(40, Math.hypot(rule.x2 - rule.x1, rule.y2 - rule.y1));
+      rule = {
+        kind: "ruler",
+        cx,
+        cy,
+        angle,
+        length,
+        snapEnabled: rule.snapEnabled,
+        locked: !!rule.locked,
+      };
+    }
+    syncRuleDockControls();
+    scheduleOverlay();
+  }
+
+  function setRuleSnapEnabled(on) {
+    ensureRule();
+    rule.snapEnabled = !!on;
+    syncRuleDockControls();
+    setStatus(rule.snapEnabled ? "rule snap on" : "rule snap off");
+    scheduleOverlay();
+  }
+
+  function syncRuleDockControls() {
+    if (!dockRule) return;
+    const kind = rule ? rule.kind : "ruler";
+    const snapOn = rule ? rule.snapEnabled : true;
+    for (const btn of dockRule.querySelectorAll("[data-rule-kind]")) {
+      btn.classList.toggle("active", btn.getAttribute("data-rule-kind") === kind);
+    }
+    const snapBtn = document.getElementById("btn-rule-snap");
+    if (snapBtn) snapBtn.classList.toggle("active", snapOn);
+  }
+
+  function setRuleDockOpen(open) {
+    ruleDockOpen = !!open;
+    if (!dockRule) return;
+    dockRule.classList.toggle("open", ruleDockOpen);
+    if (ruleDockOpen) {
+      dockRule.removeAttribute("hidden");
+      setStyleDockOpen(false);
+      setEraserDockOpen(false);
+      setSelectDockOpen(false);
+      setTextDockOpen(false);
+      setExportDockOpen(false);
+      setSessionsDockOpen(false);
+      syncRuleDockControls();
+    } else {
+      dockRule.setAttribute("hidden", "");
+    }
+  }
+
+  function toggleRuleDock() {
+    setRuleDockOpen(!ruleDockOpen);
+  }
+
+  function hitRuleLock(x, y) {
+    if (!rule) return false;
+    if (rule.kind === "ruler") {
+      const g = rulerGeometry(rule);
+      const loc = worldToRulerLocal(x, y, g);
+      const lock = rulerLockLocal(g);
+      return (
+        loc.along >= lock.along &&
+        loc.along <= lock.along + lock.size &&
+        loc.across >= lock.across &&
+        loc.across <= lock.across + lock.size
+      );
+    }
+    const mx = (rule.x1 + rule.x2) / 2;
+    const my = (rule.y1 + rule.y2) / 2;
+    const size = 22 / view.scale;
+    return x >= mx - size && x <= mx && y >= my - size / 2 && y <= my + size / 2;
+  }
+
+  function hitRuleClose(x, y) {
+    if (!rule) return false;
+    if (rule.kind === "ruler") {
+      const g = rulerGeometry(rule);
+      const loc = worldToRulerLocal(x, y, g);
+      const c = rulerCloseLocal(g);
+      return (loc.along - c.along) ** 2 + (loc.across - c.across) ** 2 <= c.r * c.r;
+    }
+    const mx = (rule.x1 + rule.x2) / 2;
+    const my = (rule.y1 + rule.y2) / 2;
+    const r = 12 / view.scale;
+    return dist2(x, y, mx, my) <= r * r;
+  }
+
+  function hitRuleTarget(x, y) {
+    if (!rule) return null;
+    if (hitRuleClose(x, y)) return { mode: "close" };
+    const hr = handleHitRadius();
+    const hr2 = hr * hr;
+    if (rule.kind === "ruler") {
+      const g = rulerGeometry(rule);
+      if (dist2(x, y, g.a.x, g.a.y) <= hr2) return { mode: "end-a" };
+      if (dist2(x, y, g.b.x, g.b.y) <= hr2) return { mode: "end-b" };
+      const loc = worldToRulerLocal(x, y, g);
+      const pad = 6 / view.scale;
+      if (loc.along >= -pad && loc.along <= g.length + pad && loc.across >= -pad && loc.across <= g.body + pad) {
+        return { mode: "move" };
+      }
+      return null;
+    }
+    if (dist2(x, y, rule.x1, rule.y1) <= hr2) return { mode: "guide-a" };
+    if (dist2(x, y, rule.x2, rule.y2) <= hr2) return { mode: "guide-b" };
+    const band = 14 / view.scale;
+    if (distPointSeg2(x, y, rule.x1, rule.y1, rule.x2, rule.y2) <= band * band) {
+      return { mode: "move-guide" };
+    }
+    return null;
+  }
+
+  function moveRuleToPoint(x, y) {
+    if (!rule) return;
+    if (rule.kind === "ruler") {
+      rule.cx = x;
+      rule.cy = y;
+    } else {
+      const cx = (rule.x1 + rule.x2) / 2;
+      const cy = (rule.y1 + rule.y2) / 2;
+      const dx = x - cx;
+      const dy = y - cy;
+      rule.x1 += dx;
+      rule.y1 += dy;
+      rule.x2 += dx;
+      rule.y2 += dy;
+    }
+  }
+
+  function applyRuleGesture(p) {
+    if (!ruleGesture || !rule || rule.locked) return;
+    const dx = p.x - ruleGesture.startX;
+    const dy = p.y - ruleGesture.startY;
+    const orig = ruleGesture.orig;
+    if (rule.kind === "ruler") {
+      if (ruleGesture.mode === "move") {
+        rule.cx = orig.cx + dx;
+        rule.cy = orig.cy + dy;
+      } else {
+        const ends = rulerEndpoints(orig);
+        const fixed = ruleGesture.mode === "end-a" ? ends.b : ends.a;
+        const moved = ruleGesture.mode === "end-a"
+          ? { x: ends.a.x + dx, y: ends.a.y + dy }
+          : { x: ends.b.x + dx, y: ends.b.y + dy };
+        const a = ruleGesture.mode === "end-a" ? moved : fixed;
+        const b = ruleGesture.mode === "end-b" ? moved : fixed;
+        syncRuleFromEndpoints(a, b);
+      }
+    } else if (ruleGesture.mode === "move-guide") {
+      rule.x1 = orig.x1 + dx;
+      rule.y1 = orig.y1 + dy;
+      rule.x2 = orig.x2 + dx;
+      rule.y2 = orig.y2 + dy;
+    } else if (ruleGesture.mode === "guide-a") {
+      rule.x1 = orig.x1 + dx;
+      rule.y1 = orig.y1 + dy;
+    } else if (ruleGesture.mode === "guide-b") {
+      rule.x2 = orig.x2 + dx;
+      rule.y2 = orig.y2 + dy;
+    }
+  }
+
+  function drawRuleOverlay() {
+    if (!rule) return;
+    const lw = 1 / view.scale;
+    const handleR = Math.max(7 / view.scale, 5);
+
+    if (rule.kind === "ruler") {
+      const g = rulerGeometry(rule);
+      octx.save();
+      octx.translate(g.a.x, g.a.y);
+      octx.rotate(rule.angle);
+      const rad = Math.min(6 / view.scale, g.body * 0.18);
+      octx.beginPath();
+      octx.moveTo(rad, 0);
+      octx.lineTo(g.length - rad, 0);
+      octx.arcTo(g.length, 0, g.length, rad, rad);
+      octx.lineTo(g.length, g.body - rad);
+      octx.arcTo(g.length, g.body, g.length - rad, g.body, rad);
+      octx.lineTo(rad, g.body);
+      octx.arcTo(0, g.body, 0, g.body - rad, rad);
+      octx.lineTo(0, rad);
+      octx.arcTo(0, 0, rad, 0, rad);
+      octx.closePath();
+      octx.fillStyle = "rgba(236, 214, 160, 0.92)";
+      octx.fill();
+      octx.strokeStyle = "rgba(92, 64, 40, 0.88)";
+      octx.lineWidth = 1.4 * lw;
+      octx.stroke();
+
+      octx.beginPath();
+      octx.moveTo(0, 0);
+      octx.lineTo(g.length, 0);
+      octx.strokeStyle = "rgba(47, 32, 18, 0.95)";
+      octx.lineWidth = 2.2 * lw;
+      octx.stroke();
+
+      const minor = 8 / view.scale;
+      const majorEvery = 5;
+      let i = 0;
+      octx.strokeStyle = "rgba(70, 48, 28, 0.85)";
+      octx.fillStyle = "rgba(70, 48, 28, 0.9)";
+      octx.font = `${Math.max(9 / view.scale, 7)}px "Segoe UI", system-ui, sans-serif`;
+      octx.textAlign = "center";
+      octx.textBaseline = "top";
+      for (let t = 0; t <= g.length - 28 / view.scale; t += minor) {
+        const major = i % majorEvery === 0;
+        const h = (major ? g.body * 0.42 : g.body * 0.22);
+        octx.beginPath();
+        octx.moveTo(t, 0);
+        octx.lineTo(t, h);
+        octx.lineWidth = (major ? 1.4 : 1) * lw;
+        octx.stroke();
+        if (major && i > 0) {
+          octx.fillText(String(i / majorEvery), t, h + 2 / view.scale);
+        }
+        i += 1;
+      }
+
+      const lock = rulerLockLocal(g);
+      drawPadlockAt(lock.along, lock.across, lock.size, !!rule.locked);
+
+      const c = rulerCloseLocal(g);
+      octx.beginPath();
+      octx.arc(c.along, c.across, c.r, 0, Math.PI * 2);
+      octx.fillStyle = "rgba(252, 248, 236, 0.96)";
+      octx.fill();
+      octx.strokeStyle = "rgba(92, 64, 40, 0.9)";
+      octx.lineWidth = 1.3 * lw;
+      octx.stroke();
+      const arm = c.r * 0.45;
+      octx.beginPath();
+      octx.moveTo(c.along - arm, c.across - arm);
+      octx.lineTo(c.along + arm, c.across + arm);
+      octx.moveTo(c.along + arm, c.across - arm);
+      octx.lineTo(c.along - arm, c.across + arm);
+      octx.stroke();
+      octx.restore();
+
+      if (!rule.locked) {
+        for (const pt of [g.a, g.b]) {
+          octx.beginPath();
+          octx.arc(pt.x, pt.y, handleR, 0, Math.PI * 2);
+          octx.fillStyle = "rgba(252, 248, 236, 0.96)";
+          octx.fill();
+          octx.strokeStyle = "rgba(92, 64, 40, 0.9)";
+          octx.lineWidth = 1.4 * lw;
+          octx.stroke();
+        }
+      }
+    } else {
+      const dx = rule.x2 - rule.x1;
+      const dy = rule.y2 - rule.y1;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      const extend = 2400;
+      octx.setLineDash([8 / view.scale, 6 / view.scale]);
+      octx.strokeStyle = "rgba(92, 64, 40, 0.75)";
+      octx.lineWidth = 1.25 * lw;
+      octx.beginPath();
+      octx.moveTo(rule.x1 - ux * extend, rule.y1 - uy * extend);
+      octx.lineTo(rule.x2 + ux * extend, rule.y2 + uy * extend);
+      octx.stroke();
+      octx.setLineDash([]);
+      octx.beginPath();
+      octx.moveTo(rule.x1, rule.y1);
+      octx.lineTo(rule.x2, rule.y2);
+      octx.lineWidth = 2.5 * lw;
+      octx.stroke();
+      for (const pt of [{ x: rule.x1, y: rule.y1 }, { x: rule.x2, y: rule.y2 }]) {
+        octx.beginPath();
+        octx.arc(pt.x, pt.y, handleR, 0, Math.PI * 2);
+        octx.fillStyle = "rgba(252, 248, 236, 0.96)";
+        octx.fill();
+        octx.strokeStyle = "rgba(92, 64, 40, 0.9)";
+        octx.stroke();
+      }
+      const mx = (rule.x1 + rule.x2) / 2;
+      const my = (rule.y1 + rule.y2) / 2;
+      const cr = 10 / view.scale;
+      const lockSize = 22 / view.scale;
+      drawPadlockAt(mx - lockSize - 4 / view.scale, my - lockSize / 2, lockSize, !!rule.locked);
+      octx.beginPath();
+      octx.arc(mx, my, cr, 0, Math.PI * 2);
+      octx.fillStyle = "rgba(252, 248, 236, 0.96)";
+      octx.fill();
+      octx.stroke();
+      const arm = cr * 0.45;
+      octx.beginPath();
+      octx.moveTo(mx - arm, my - arm);
+      octx.lineTo(mx + arm, my + arm);
+      octx.moveTo(mx + arm, my - arm);
+      octx.lineTo(mx - arm, my + arm);
+      octx.stroke();
+    }
+
+    if (!rule.snapEnabled) {
+      octx.save();
+      octx.font = `${Math.max(10 / view.scale, 8)}px "Segoe UI", system-ui, sans-serif`;
+      octx.fillStyle = "rgba(138, 59, 43, 0.9)";
+      octx.textAlign = "center";
+      if (rule.kind === "ruler") {
+        octx.fillText("snap off", rule.cx, rule.cy);
+      } else {
+        octx.fillText("snap off", (rule.x1 + rule.x2) / 2, (rule.y1 + rule.y2) / 2 - 18 / view.scale);
+      }
+      octx.restore();
+    }
+  }
+
+  function drawPadlockAt(x, y, s, locked) {
+    octx.fillStyle = locked ? "rgba(47, 93, 80, 0.95)" : "rgba(252, 248, 236, 0.96)";
+    octx.strokeStyle = "rgba(47, 93, 80, 0.95)";
+    octx.lineWidth = 1.4 / view.scale;
+    const rad = Math.max(3 / view.scale, 2);
+    octx.beginPath();
+    octx.moveTo(x + rad, y);
+    octx.arcTo(x + s, y, x + s, y + s, rad);
+    octx.arcTo(x + s, y + s, x, y + s, rad);
+    octx.arcTo(x, y + s, x, y, rad);
+    octx.arcTo(x, y, x + s, y, rad);
+    octx.closePath();
+    octx.fill();
+    octx.stroke();
+    const cx = x + s / 2;
+    const cy = y + s / 2;
+    const bodyW = s * 0.38;
+    const bodyH = s * 0.28;
+    const bodyY = cy - bodyH * 0.1;
+    octx.fillStyle = locked ? "rgba(252, 251, 247, 0.95)" : "rgba(47, 93, 80, 0.95)";
+    octx.strokeStyle = octx.fillStyle;
+    octx.lineWidth = Math.max(1.6 / view.scale, 1.1);
+    octx.beginPath();
+    octx.rect(cx - bodyW / 2, bodyY, bodyW, bodyH);
+    octx.fill();
+    octx.beginPath();
+    octx.arc(cx, bodyY, bodyW * 0.42, Math.PI, 0, false);
+    if (!locked) {
+      octx.moveTo(cx + bodyW * 0.42, bodyY);
+      octx.lineTo(cx + bodyW * 0.42, bodyY - bodyH * 0.15);
+    }
+    octx.stroke();
   }
 
   function setSelectDockOpen(open) {
@@ -424,6 +999,7 @@
       dockSelect.removeAttribute("hidden");
       setStyleDockOpen(false);
       setEraserDockOpen(false);
+      setRuleDockOpen(false);
       setTextDockOpen(false);
       setExportDockOpen(false);
       setSessionsDockOpen(false);
@@ -452,6 +1028,8 @@
     if (styleDockOpen) {
       dockStyle.removeAttribute("hidden");
       setEraserDockOpen(false);
+      setRuleDockOpen(false);
+      setSelectDockOpen(false);
       setTextDockOpen(false);
       setExportDockOpen(false);
       setSessionsDockOpen(false);
@@ -471,6 +1049,8 @@
     if (eraserDockOpen) {
       dockEraser.removeAttribute("hidden");
       setStyleDockOpen(false);
+      setRuleDockOpen(false);
+      setSelectDockOpen(false);
       setTextDockOpen(false);
       setExportDockOpen(false);
       setSessionsDockOpen(false);
@@ -491,6 +1071,8 @@
       dockText.removeAttribute("hidden");
       setStyleDockOpen(false);
       setEraserDockOpen(false);
+      setRuleDockOpen(false);
+      setSelectDockOpen(false);
       setExportDockOpen(false);
       setSessionsDockOpen(false);
       syncTextStyleControls();
@@ -511,6 +1093,8 @@
       dockExport.removeAttribute("hidden");
       setStyleDockOpen(false);
       setEraserDockOpen(false);
+      setRuleDockOpen(false);
+      setSelectDockOpen(false);
       setTextDockOpen(false);
       setSessionsDockOpen(false);
     } else {
@@ -530,6 +1114,8 @@
       dockSessions.removeAttribute("hidden");
       setStyleDockOpen(false);
       setEraserDockOpen(false);
+      setRuleDockOpen(false);
+      setSelectDockOpen(false);
       setTextDockOpen(false);
       setExportDockOpen(false);
       refreshSessions().catch(() => {});
@@ -917,7 +1503,7 @@
     };
   }
 
-  function pointerWorld(ev) {
+  function pointerWorldRaw(ev) {
     const { sx, sy } = pointerScreen(ev);
     const w = screenToWorld(sx, sy);
     return {
@@ -928,6 +1514,10 @@
       sx,
       sy,
     };
+  }
+
+  function pointerWorld(ev) {
+    return constrainInkPoint(pointerWorldRaw(ev));
   }
 
   function applyViewTransform() {
@@ -1649,6 +2239,29 @@
         !textEditor.hidden &&
         (document.activeElement === textEditor || textEditor.contains(document.activeElement))
     );
+  }
+
+  function isTypingTarget(el) {
+    if (!el || el === document.body || el === document.documentElement || el === canvas) {
+      return false;
+    }
+    if (el === textEditor || (textEditor && textEditor.contains(el))) {
+      return isTypingInTextEditor();
+    }
+    const tag = el.tagName;
+    if (tag === "TEXTAREA") return true;
+    if (tag === "INPUT") {
+      const type = String(el.type || "text").toLowerCase();
+      return type === "text" || type === "search" || type === "password" || type === "number";
+    }
+    return false;
+  }
+
+  function shortcutKey(ev) {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return "";
+    const code = ev.code || "";
+    if (code.indexOf("Key") === 0) return code.slice(3).toLowerCase();
+    return String(ev.key || "").toLowerCase();
   }
 
   function openTextEditor(textId, selectAll) {
@@ -2922,7 +3535,7 @@
     const groupBounds = selectedIds.size > 0 ? getSelectionBounds() : null;
     const hasSelectionUi =
       selectedIds.size > 0 || selectDrag || singleBox || selectedImageId || selectedTextId;
-    if (!hasSelectionUi && !eraserCursor && !textCreateDrag) return;
+    if (!hasSelectionUi && !eraserCursor && !textCreateDrag && !rule) return;
     octx.save();
     octx.translate(view.x, view.y);
     octx.scale(view.scale, view.scale);
@@ -3034,6 +3647,9 @@
       octx.fill();
       octx.stroke();
     }
+
+    if (rule) drawRuleOverlay();
+
     octx.restore();
   }
 
@@ -3769,6 +4385,7 @@
     sendOp({ op: "end_stroke", stroke_id: currentStrokeId, page_id: "p0" });
     currentStrokeId = null;
     livePoints = null;
+    inkLockedToRule = false;
   }
 
   function eraseWholeAt(x, y) {
@@ -4040,9 +4657,54 @@
 
     if (ev.pointerType === "touch") return;
 
-    const p = pointerWorld(ev);
+    if (typeof canvas.focus === "function") {
+      try {
+        canvas.focus({ preventScroll: true });
+      } catch (_) {
+        canvas.focus();
+      }
+    }
+
+    const raw = pointerWorldRaw(ev);
+    const p = constrainInkPoint(raw);
     eraserCursor =
       tool === "erase-stroke" || tool === "erase-partial" ? { x: p.x, y: p.y } : null;
+
+    if (rule) {
+      if (hitRuleLock(raw.x, raw.y)) {
+        toggleRuleLock();
+        ev.preventDefault();
+        return;
+      }
+      if (hitRuleClose(raw.x, raw.y)) {
+        hideRule();
+        ev.preventDefault();
+        return;
+      }
+      if (tool === "rule" && !rule.locked) {
+        const hit = hitRuleTarget(raw.x, raw.y);
+        if (hit && hit.mode !== "close") {
+          try {
+            canvas.setPointerCapture(ev.pointerId);
+          } catch (_) {}
+          ruleGesture = {
+            mode: hit.mode,
+            startX: raw.x,
+            startY: raw.y,
+            orig: cloneRuleState(rule),
+            pointerId: ev.pointerId,
+          };
+          setStatus("adjust ruler");
+          ev.preventDefault();
+          return;
+        }
+      }
+    }
+
+    if (tool === "rule") {
+      ev.preventDefault();
+      return;
+    }
 
     // Text tool: drag to size a new box, or click existing to edit.
     if (tool === "text") {
@@ -4332,7 +4994,15 @@
       return;
     }
 
-    const p = pointerWorld(ev);
+    const raw = pointerWorldRaw(ev);
+    const p = constrainInkPoint(raw);
+
+    if (ruleGesture && ruleGesture.pointerId === ev.pointerId) {
+      applyRuleGesture(raw);
+      scheduleOverlay();
+      ev.preventDefault();
+      return;
+    }
 
     if (imagePress && imagePress.pointerId === ev.pointerId) {
       const screen = pointerScreen(ev);
@@ -4583,6 +5253,14 @@
       return;
     }
 
+    if (ruleGesture && ruleGesture.pointerId === ev.pointerId) {
+      ruleGesture = null;
+      scheduleOverlay();
+      updateCursor();
+      ev.preventDefault();
+      return;
+    }
+
     if (imagePress && imagePress.pointerId === ev.pointerId) {
       const wasArmed = imagePress.armed;
       clearImagePress();
@@ -4649,20 +5327,14 @@
   );
 
   window.addEventListener("keydown", (ev) => {
-    if (
-      isTypingInTextEditor() ||
-      (textEditor && document.activeElement === textEditor) ||
-      (ev.target &&
-        (ev.target.tagName === "TEXTAREA" ||
-          ev.target.tagName === "INPUT" ||
-          ev.target.isContentEditable))
-    ) {
+    if (isTypingTarget(ev.target) || isTypingTarget(document.activeElement)) {
       if (ev.key === "Escape" && editingTextId) {
         commitTextEditor();
         ev.preventDefault();
       }
       return;
     }
+    const key = shortcutKey(ev);
     if (ev.code === "Space" && !ev.repeat) {
       spaceHeld = true;
       updateCursor();
@@ -4702,6 +5374,12 @@
       }
       if (imageGesture) imageGesture = null;
       if (textGesture) textGesture = null;
+      if (ruleGesture) ruleGesture = null;
+      if (rule) {
+        hideRule();
+        ev.preventDefault();
+        return;
+      }
       if (selectedIds.size > 0 || selectedImageId || selectedTextId) {
         clearSelection();
         ev.preventDefault();
@@ -4731,20 +5409,34 @@
         ev.preventDefault();
       }
     }
-    if (ev.key === "e" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    if (key === "e") {
       setTool(tool === "erase-stroke" ? "erase-partial" : "erase-stroke");
+      ev.preventDefault();
     }
-    if (ev.key === "b" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) setTool("pen");
-    if (ev.key === "v" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) setTool("select");
-    if (ev.key === "t" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) setTool("text");
-    if (tool === "select" && ev.key === "r" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
-      setPickMode("rect");
+    if (key === "b") {
+      setTool("pen");
+      ev.preventDefault();
     }
-    if (tool === "select" && ev.key === "l" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    if (key === "v") {
+      setTool("select");
+      ev.preventDefault();
+    }
+    if (key === "r") {
+      if (tool === "select") setPickMode("rect");
+      else toggleRule();
+      ev.preventDefault();
+    }
+    if (key === "l" && tool === "select") {
       setPickMode("lasso");
+      ev.preventDefault();
     }
-    if (ev.key === "p" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+    if (key === "t") {
+      setTool("text");
+      ev.preventDefault();
+    }
+    if (key === "p") {
       Perf.setHud(!Perf.hud);
+      ev.preventDefault();
     }
     if ((ev.key === "+" || ev.key === "=") && (ev.ctrlKey || ev.metaKey)) {
       zoomByButton(ZOOM_STEP);
@@ -5089,6 +5781,30 @@
     toggleEraserDock();
   };
 
+  if (btnRule) {
+    btnRule.onclick = () => toggleRule();
+    btnRule.ondblclick = (ev) => {
+      ev.preventDefault();
+      setTool("rule");
+      ensureRule();
+      toggleRuleDock();
+    };
+  }
+  for (const btn of document.querySelectorAll("[data-rule-kind]")) {
+    btn.onclick = () => setRuleKind(btn.getAttribute("data-rule-kind") || "ruler");
+  }
+  const btnRuleSnap = document.getElementById("btn-rule-snap");
+  if (btnRuleSnap) {
+    btnRuleSnap.onclick = () => {
+      ensureRule();
+      setRuleSnapEnabled(!rule.snapEnabled);
+    };
+  }
+  const btnRuleHide = document.getElementById("btn-rule-hide");
+  if (btnRuleHide) {
+    btnRuleHide.onclick = () => hideRule();
+  }
+
   for (const btn of document.querySelectorAll(".pen-kind")) {
     btn.onclick = () => setInkKind(btn.getAttribute("data-kind") || "pen");
   }
@@ -5141,10 +5857,6 @@
     .then(() => refreshSessions().catch(() => {}))
     .catch((err) => setStatus(String(err)));
 
-  /**
-   * Automated erase benchmark for Playwright / console.
-   * Builds a dense scene, runs partial-erase stamps, returns timing stats.
-   */
   window.__apeSketchBench = {
     getTier: () => OPT_TIER,
     setTier(tier) {
@@ -5228,5 +5940,19 @@
       }).catch(() => {});
       return result;
     },
+  };
+
+  window.__apeSketchRules = {
+    getRule: () => (rule ? cloneRuleState(rule) : null),
+    setRule: (state) => {
+      rule = state ? cloneRuleState(state) : null;
+      scheduleOverlay();
+    },
+    constrainPoint: (x, y) => {
+      const p = constrainInkPoint({ x, y, t: 0, pressure: 0.5, sx: 0, sy: 0 });
+      return { x: p.x, y: p.y };
+    },
+    projectSegment: projectOntoSegment,
+    projectLine: projectOntoLine,
   };
 })();

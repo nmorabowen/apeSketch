@@ -104,6 +104,7 @@
     #board.panning.dragging { cursor: grabbing; }
     #board.erasing { cursor: cell; }
     #board.selecting { cursor: default; }
+    #board:focus { outline: none; }
 
     .brand {
       position: fixed;
@@ -213,6 +214,35 @@
     .dock-eraser.open {
       display: flex;
       animation: dock-in 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+    .dock-rule {
+      left: 84px;
+      top: 50%;
+      transform: translateY(-50%);
+      flex-direction: column;
+      gap: 6px;
+      padding: 8px 10px;
+      display: none;
+      min-width: 108px;
+    }
+    .dock-rule.open {
+      display: flex;
+      animation: dock-in 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+    }
+    .dock-rule .rule-row {
+      display: flex;
+      gap: 4px;
+    }
+    .dock-rule button.rule-toggle {
+      flex: 1;
+      width: auto;
+      height: 32px;
+      border-radius: 8px;
+      font-size: 11px;
+    }
+    .dock-rule button.rule-toggle.active {
+      background: var(--accent-soft);
+      outline: 1px solid var(--accent);
     }
     .dock-text {
       left: 84px;
@@ -473,6 +503,7 @@
       display: grid;
       place-items: center;
       cursor: pointer;
+      position: relative;
       transition: background 140ms ease, color 140ms ease, transform 140ms ease;
     }
     .dock button svg {
@@ -483,6 +514,20 @@
       stroke-width: 1.75;
       stroke-linecap: round;
       stroke-linejoin: round;
+    }
+    .dock button .kbd {
+      position: absolute;
+      right: 4px;
+      bottom: 3px;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0;
+      line-height: 1;
+      color: var(--muted);
+      pointer-events: none;
+    }
+    .dock button.active .kbd {
+      color: rgba(247, 245, 239, 0.85);
     }
     .dock button:hover {
       background: var(--accent-soft);
@@ -580,6 +625,8 @@
       }
       .dock-style.open,
       .dock-eraser.open,
+      .dock-rule.open,
+      .dock-select.open,
       .dock-text.open {
         left: 12px;
         right: 12px;
@@ -614,7 +661,7 @@
   </style>
 </head>
 <body>
-  <canvas id="board"></canvas>
+  <canvas id="board" tabindex="0"></canvas>
   <canvas id="overlay" aria-hidden="true"></canvas>
 
   <div class="brand">
@@ -628,6 +675,7 @@
   <nav class="dock dock-tools" aria-label="Tools">
     <button type="button" id="btn-pen" class="active" title="Pen (B) · double-click for style">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l3.2-.7L18.5 7.9a2 2 0 0 0 0-2.8l-.6-.6a2 2 0 0 0-2.8 0L3.7 15.8 4 20z"/><path d="M13.8 6.2l4 4"/></svg>
+      <span class="kbd">B</span>
     </button>
     <button type="button" id="btn-select" title="Select (V) · double-click for colors">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l12 16-5-1.5L6 22l2.5-7L6 4z"/></svg>
@@ -640,6 +688,10 @@
     </button>
     <button type="button" id="btn-pan" title="Pan (Space / middle mouse)">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18"/><path d="M3 12h18"/><path d="M12 3l-3 3"/><path d="M12 3l3 3"/><path d="M12 21l-3-3"/><path d="M12 21l3-3"/><path d="M3 12l3-3"/><path d="M3 12l3 3"/><path d="M21 12l-3-3"/><path d="M21 12l-3 3"/></svg>
+    </button>
+    <button type="button" id="btn-rule" title="Rule (R) · double-click for options">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 16l13-13 5 5L8 21H3v-5z"/><path d="M14 6l4 4"/><path d="M8 12l1.5 1.5"/><path d="M11 9l1.5 1.5"/></svg>
+      <span class="kbd">R</span>
     </button>
     <button type="button" id="btn-image" title="Import image (or paste)">
       <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M5 17l4.5-4.5L13 16l2-2 4 4"/></svg>
@@ -723,6 +775,19 @@
     <div class="size-row">
       <input type="range" id="eraser-size" min="4" max="48" step="1" value="14" aria-label="Eraser size" />
       <span class="size-value" id="eraser-size-label">14</span>
+    </div>
+  </aside>
+
+  <aside class="dock dock-rule" id="dock-rule" aria-label="Drawing rule" hidden>
+    <div class="label">Kind</div>
+    <div class="rule-row">
+      <button type="button" class="rule-toggle active" data-rule-kind="ruler" title="Straight edge">Edge</button>
+      <button type="button" class="rule-toggle" data-rule-kind="guide" title="Guide line">Guide</button>
+    </div>
+    <div class="label">Snap</div>
+    <div class="rule-row">
+      <button type="button" class="rule-toggle active" id="btn-rule-snap" title="Snap ink to rule">On</button>
+      <button type="button" class="rule-toggle" id="btn-rule-hide" title="Remove rule">Hide</button>
     </div>
   </aside>
 

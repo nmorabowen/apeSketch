@@ -21,3 +21,4 @@ agents and for the ape* toolchain.
 - [0003](../adrs/0003-python-document-clients.md) — Python authority
 - [0004](../adrs/0004-lan-session-host.md) — LAN Session host
 - [0007](../adrs/0007-instance-scoped-host.md) — one host per instance root
+- [0009](../adrs/0009-drawing-rules-client-capture.md) — drawing rules (per-client, capture-only)
