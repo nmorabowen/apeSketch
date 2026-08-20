@@ -37,6 +37,7 @@ from apeSketch.host.perf_store import append_sample, summarize
 from apeSketch.host.qr_svg import board_qr_svg
 from apeSketch.host.session_store import SessionStore
 from apeSketch.session import SketchSession
+from apeSketch.substrate import export_filename, title_from_open_request
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Workbench may assign these before calling main(); otherwise resolve_instance.
@@ -268,7 +269,7 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(raw)))
             self.send_header(
                 "Content-Disposition",
-                f'attachment; filename="apesketch-{self.server.session.document.revision}.json"',
+                f'attachment; filename="{export_filename(product="apeSketch", revision=self.server.session.document.revision)}"',
             )
             self.send_header("Cache-Control", "no-store")
             self._cors()
@@ -383,6 +384,40 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
                     raise DocumentError("id required")
                 self.server.flush_autosave()
                 meta, doc = self.server.store.load(sid)
+                self.server.session.replace_document(
+                    doc,
+                    session_id=meta.id,
+                    session_title=meta.title,
+                )
+                self._send_json(
+                    200,
+                    {
+                        "session": meta.to_dict(),
+                        "snapshot": self.server.session.snapshot_message(),
+                        **self.server.session_payload(),
+                    },
+                )
+            except DocumentError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except OSError as exc:
+                self._send_json(500, {"error": str(exc)})
+            return
+        if parsed.path == "/api/sessions/open":
+            try:
+                payload = self._read_json_object()
+                doc_raw = payload.get("document")
+                if not isinstance(doc_raw, dict):
+                    raise DocumentError("document object required")
+                title = payload.get("title")
+                filename = payload.get("filename")
+                if title is not None and not isinstance(title, str):
+                    raise DocumentError("title must be a string")
+                if filename is not None and not isinstance(filename, str):
+                    raise DocumentError("filename must be a string")
+                label = title_from_open_request(title, filename)
+                self.server.flush_autosave()
+                doc = Document.from_dict({str(k): v for k, v in doc_raw.items()})
+                meta = self.server.store.create(doc, title=label)
                 self.server.session.replace_document(
                     doc,
                     session_id=meta.id,

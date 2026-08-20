@@ -24,6 +24,7 @@ venv/
 Thumbs.db
 
 # Local exports
+*.ape.json
 *.apesketch.json
 /out/
 /bundle/

@@ -31,6 +31,7 @@
   const btnTextIndent = document.getElementById("btn-text-indent");
   const btnTextOutdent = document.getElementById("btn-text-outdent");
   const fileImageInput = document.getElementById("file-image");
+  const fileOpenInput = document.getElementById("file-open");
   const btnRecord = document.getElementById("btn-record");
 
   let pair = null;
@@ -616,6 +617,28 @@
     if (!id || id === activeSessionId) return;
     await postSession("/api/sessions/load", { id });
     setStatus(`opened · ${activeSessionTitle}`);
+  }
+
+  async function openDocumentFile(file) {
+    if (!file) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(await file.text());
+    } catch (_) {
+      throw new Error("invalid JSON file");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("document JSON must be an object");
+    }
+    await postSession("/api/sessions/open", {
+      document: parsed,
+      filename: file.name,
+    });
+    setStatus(`opened · ${activeSessionTitle}`);
+  }
+
+  function openDocumentFilePicker() {
+    if (fileOpenInput) fileOpenInput.click();
   }
 
   async function deleteSession(id) {
@@ -4034,6 +4057,10 @@
       zoomByButton(1 / ZOOM_STEP);
       ev.preventDefault();
     }
+    if (ev.key === "o" && (ev.ctrlKey || ev.metaKey)) {
+      openDocumentFilePicker();
+      ev.preventDefault();
+    }
     if (ev.key === "0" && (ev.ctrlKey || ev.metaKey)) {
       resetView();
       ev.preventDefault();
@@ -4080,12 +4107,21 @@
       fileImageInput.value = "";
     };
   }
+  if (fileOpenInput) {
+    fileOpenInput.onchange = () => {
+      const file = fileOpenInput.files && fileOpenInput.files[0];
+      fileOpenInput.value = "";
+      if (!file) return;
+      openDocumentFile(file).catch((err) => setStatus(String(err.message || err)));
+    };
+  }
 
   document.getElementById("btn-export").onclick = () => toggleExportDock();
   const btnSessions = document.getElementById("btn-sessions");
   if (btnSessions) btnSessions.onclick = () => toggleSessionsDock();
   const btnSessionSave = document.getElementById("btn-session-save");
   const btnSessionNew = document.getElementById("btn-session-new");
+  const btnSessionOpen = document.getElementById("btn-session-open");
   if (btnSessionSave) {
     btnSessionSave.onclick = () => {
       saveSessionNow().catch((err) => setStatus(String(err.message || err)));
@@ -4095,6 +4131,9 @@
     btnSessionNew.onclick = () => {
       newSession().catch((err) => setStatus(String(err.message || err)));
     };
+  }
+  if (btnSessionOpen) {
+    btnSessionOpen.onclick = () => openDocumentFilePicker();
   }
   if (sessionTitleInput) {
     sessionTitleInput.addEventListener("change", () => {
@@ -4115,7 +4154,7 @@
       .catch((err) => setStatus(String(err.message || err)));
   };
   document.getElementById("btn-export-json").onclick = () => {
-    exportFromApi("/api/export/json", `apesketch-${Date.now()}.json`)
+    exportFromApi("/api/export/json", `apesketch-${Date.now()}.ape.json`)
       .then(() => setStatus("exported JSON"))
       .catch((err) => setStatus(String(err.message || err)));
   };

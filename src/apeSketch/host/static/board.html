@@ -751,6 +751,7 @@
     <div class="session-actions">
       <button type="button" id="btn-session-save" title="Save now">Save</button>
       <button type="button" id="btn-session-new" title="New blank session">New</button>
+      <button type="button" id="btn-session-open" title="Open a .ape.json file">Open file</button>
     </div>
     <div class="sep" aria-hidden="true"></div>
     <div class="label">Open</div>
@@ -758,6 +759,7 @@
   </aside>
 
   <input type="file" id="file-image" accept="image/png,image/jpeg,image/webp,image/gif" hidden />
+  <input type="file" id="file-open" accept=".ape.json,.apesketch.json,.json,application/json" hidden />
   <div id="text-editor" contenteditable="true" hidden spellcheck="true" role="textbox" aria-multiline="true" aria-label="Edit text" data-placeholder="Type here"></div>
 
   <div class="dock dock-view" aria-label="View">

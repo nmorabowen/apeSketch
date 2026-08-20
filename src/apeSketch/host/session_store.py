@@ -1,6 +1,6 @@
 """On-disk session library under ``.apeSketch/sessions/``.
 
-A "recorded" session is a saved Document (``.apesketch.json``) plus metadata,
+A "recorded" session is a saved Document (``.ape.json``) plus metadata,
 not a WebM download. Assets stay in the shared AssetStore.
 """
 
@@ -16,9 +16,11 @@ from typing import Any
 
 from apeSketch.document import Document
 from apeSketch.errors import DocumentError
+from apeSketch.substrate import LEGACY_SESSION_DOC_NAME, SESSION_DOC_NAME
 
 DEFAULT_SESSIONS_DIR = Path(".apeSketch") / "sessions"
-_DOC_NAME = "document.apesketch.json"
+_DOC_NAME = SESSION_DOC_NAME
+_LEGACY_DOC_NAME = LEGACY_SESSION_DOC_NAME
 _META_NAME = "meta.json"
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
 
@@ -90,6 +92,18 @@ class SessionStore:
     def _doc_path(self, session_id: str) -> Path:
         return self._dir(session_id) / _DOC_NAME
 
+    def _resolve_doc_path(self, session_id: str) -> Path:
+        primary = self._doc_path(session_id)
+        if primary.is_file():
+            return primary
+        legacy = self._dir(session_id) / _LEGACY_DOC_NAME
+        if legacy.is_file():
+            return legacy
+        raise DocumentError(f"missing document for session {session_id!r}")
+
+    def _session_has_document(self, folder: Path) -> bool:
+        return (folder / _DOC_NAME).is_file() or (folder / _LEGACY_DOC_NAME).is_file()
+
     def _read_meta(self, session_id: str) -> SessionMeta:
         path = self._meta_path(session_id)
         if not path.is_file():
@@ -116,7 +130,7 @@ class SessionStore:
         for child in self.root.iterdir():
             if not child.is_dir():
                 continue
-            if not (child / _META_NAME).is_file() or not (child / _DOC_NAME).is_file():
+            if not (child / _META_NAME).is_file() or not self._session_has_document(child):
                 continue
             try:
                 items.append(self._read_meta(child.name))
@@ -178,14 +192,15 @@ class SessionStore:
             revision=document.revision,
         )
         document.save(self._doc_path(session_id))
+        legacy = self._dir(session_id) / _LEGACY_DOC_NAME
+        if legacy.is_file():
+            legacy.unlink()
         self._write_meta(meta)
         return meta
 
     def load(self, session_id: str) -> tuple[SessionMeta, Document]:
         meta = self._read_meta(session_id)
-        path = self._doc_path(session_id)
-        if not path.is_file():
-            raise DocumentError(f"missing document for session {session_id!r}")
+        path = self._resolve_doc_path(session_id)
         return meta, Document.load(path)
 
     def rename(self, session_id: str, title: str) -> SessionMeta:
@@ -204,7 +219,7 @@ class SessionStore:
         folder = self._dir(session_id)
         if not folder.is_dir():
             raise DocumentError(f"unknown session {session_id!r}")
-        for name in (_DOC_NAME, _META_NAME):
+        for name in (_DOC_NAME, _LEGACY_DOC_NAME, _META_NAME):
             path = folder / name
             if path.is_file():
                 path.unlink()

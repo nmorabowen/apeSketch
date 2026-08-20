@@ -68,6 +68,14 @@ HTTP-only (no WebSocket):
 python -m apeSketch --http-only
 ```
 
+Workbench (and any other host) can bind one instance to a folder:
+
+```bash
+python -m apeSketch --root <folder> --sessions <folder>/files --assets <folder>/pictures --http-only --no-browser
+```
+
+`GET /api/host` reports that binding; `host.json` is the live stamp.
+
 From this checkout (shared OpenSees toolchain venv):
 
 ```powershell
