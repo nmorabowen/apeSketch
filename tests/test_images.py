@@ -8,6 +8,7 @@ import pytest
 
 from apeSketch.assets import AssetStore
 from apeSketch.document import Document
+from apeSketch.export import page_to_svg
 from apeSketch.ops import AddImage, EraseImage, SetBackground
 
 
@@ -51,7 +52,7 @@ def test_add_and_erase_image_in_document() -> None:
     assert page.image_order == ["img1"]
     assert page.images["img1"].asset_id == "a-test"
 
-    svg = Document._page_to_svg(page)
+    svg = page_to_svg(page)
     assert 'data-image-id="img1"' in svg
     assert "a-test" in svg
 

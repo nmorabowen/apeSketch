@@ -13,6 +13,7 @@ import pytest
 
 from apeSketch.assets import AssetStore
 from apeSketch.document import Document
+from apeSketch.host.cli import write_live_stamp
 from apeSketch.host.instance import (
     InstancePaths,
     clear_stamp,
@@ -20,7 +21,7 @@ from apeSketch.host.instance import (
     resolve_instance,
     same_root,
 )
-from apeSketch.host.server import SessionHttpServer, _bind_http, _write_live_stamp
+from apeSketch.host.server import SessionHttpServer, bind_http
 from apeSketch.host.session_store import SessionStore
 from apeSketch.ops import BeginStroke
 from apeSketch.session import SketchSession
@@ -70,7 +71,7 @@ def _start(root: Path, preferred: int) -> tuple[SessionHttpServer, InstancePaths
     paths = resolve_instance(root=root)
     store = SessionStore(paths.sessions)
     session = SketchSession(assets=AssetStore(paths.assets))
-    http = _bind_http(
+    http = bind_http(
         "127.0.0.1",
         preferred,
         session,
@@ -84,7 +85,7 @@ def _start(root: Path, preferred: int) -> tuple[SessionHttpServer, InstancePaths
     thread.start()
     http.serve_thread = thread
     time.sleep(0.05)
-    _write_live_stamp(paths, http, advertise_host="127.0.0.1")
+    write_live_stamp(paths, http, advertise_host="127.0.0.1")
     return http, paths
 
 

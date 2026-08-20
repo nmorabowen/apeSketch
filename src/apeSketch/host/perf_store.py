@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +24,7 @@ def perf_dir(root: Path | None = None, *, directory: Path | None = None) -> Path
 
 
 def _day_file(directory: Path) -> Path:
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
     return directory / f"board-{day}.jsonl"
 
 
@@ -38,7 +38,7 @@ def append_sample(
     directory = perf_dir(root, directory=directory)
     path = _day_file(directory)
     record = {
-        "received_at": datetime.now(timezone.utc).isoformat(),
+        "received_at": datetime.now(UTC).isoformat(),
         **sample,
     }
     line = json.dumps(record, separators=(",", ":")) + "\n"

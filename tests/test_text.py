@@ -6,6 +6,7 @@ import pytest
 
 from apeSketch.document import Document
 from apeSketch.errors import DocumentError
+from apeSketch.export import page_to_svg
 from apeSketch.ops import (
     AddText,
     EraseText,
@@ -14,7 +15,7 @@ from apeSketch.ops import (
     SetTextStyle,
     TransformText,
 )
-from apeSketch.types import TextBlock, TextObject, TextRun, flatten_blocks
+from apeSketch.types import TextObject, flatten_blocks
 
 
 def test_add_edit_transform_erase_text() -> None:
@@ -43,7 +44,7 @@ def test_add_edit_transform_erase_text() -> None:
     text = page.texts["t1"]
     assert text.x == 5 and text.font_size == 30
 
-    svg = Document._page_to_svg(page)
+    svg = page_to_svg(page)
     assert 'data-text-id="t1"' in svg
     assert "Hello" in svg
 
@@ -117,7 +118,7 @@ def test_rich_blocks_roundtrip() -> None:
     assert text.blocks[2].runs[1].font_size == 36
     assert "Alpha" in text.content and "Beta" in text.content
 
-    svg = Document._page_to_svg(doc.page())
+    svg = page_to_svg(doc.page())
     assert "•" in svg or "Alpha" in svg
     assert "1." in svg or "Beta" in svg
     assert 'font-size="36' in svg

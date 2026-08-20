@@ -6,6 +6,7 @@ How to work in apeSketch.
 |---|---|
 | [python-env.md](python-env.md) | Which Python/venv to use (`opensees_env`) |
 | [perf-profile.md](perf-profile.md) | Measuring board FPS / erase timings |
+| [adding-an-op.md](adding-an-op.md) | Growing the op vocabulary (humans and agents) |
 | (pending) Agent onboarding | Coding agents |
 | (pending) Adding an ADR | Humans and agents |
 
