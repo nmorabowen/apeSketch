@@ -18,6 +18,7 @@ Status: `Proposed` → `Accepted` → `Amended` / `Superseded`.
 | [0006](0006-viewport-client-camera.md) | Viewport pan/zoom is client camera, not Document state | Accepted |
 | [0007](0007-instance-scoped-host.md) | Session host is instance-scoped, not machine-global | Accepted |
 | [0008](0008-ape-json-substrate.md) | Consolidated `.ape.json` substrate across ape* documents | Accepted |
+| [0009](0009-drawing-rules-client-capture.md) | Drawing rules are per-client capture aids, not Document state | Accepted |
 
 ## Template
 
