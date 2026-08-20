@@ -1,38 +1,24 @@
-"""HTTP + optional WebSocket Session host (prototype P1).
+"""HTTP Session host: routes, static files, autosave.
 
-Live multi-client WS needs ``websockets`` (included in ``pip install apeSketch``).
+The WebSocket bridge lives in ``apeSketch.host.ws``; the CLI and host
+lifecycle live in ``apeSketch.host.cli``. ``main`` is re-exported here
+for the ``apeSketch`` console script and older callers.
 """
 
 from __future__ import annotations
 
-import argparse
-import asyncio
 import json
 import os
-import socket
 import threading
-import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
-from apeSketch.assets import AssetStore
 from apeSketch.document import Document
 from apeSketch.errors import DocumentError
-from apeSketch.host.instance import (
-    DEFAULT_HOST,
-    DEFAULT_PORT,
-    HostStamp,
-    InstancePaths,
-    clear_stamp,
-    iter_http_ports,
-    iter_ws_ports,
-    live_host,
-    resolve_instance,
-    wait_until_up,
-    write_stamp,
-)
+from apeSketch.export import page_to_svg
+from apeSketch.host.instance import InstancePaths, iter_http_ports
 from apeSketch.host.perf_store import append_sample, summarize
 from apeSketch.host.qr_svg import board_qr_svg
 from apeSketch.host.session_store import SessionStore
@@ -44,15 +30,6 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 SESSIONS_DIR: Path | None = None
 ASSET_DIR: Path | None = None
 AUTOSAVE_DELAY_S = 0.8
-
-
-def _lan_ip() -> str:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("8.8.8.8", 80))
-            return sock.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
 
 
 class SessionHttpServer(ThreadingHTTPServer):
@@ -189,27 +166,6 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
                 no_store=True,
             )
             return
-        if path == "/board.js":
-            self._send_file(
-                STATIC_DIR / "board.js",
-                "text/javascript; charset=utf-8",
-                no_store=True,
-            )
-            return
-        if path == "/brush.js":
-            self._send_file(
-                STATIC_DIR / "brush.js",
-                "text/javascript; charset=utf-8",
-                no_store=True,
-            )
-            return
-        if path == "/selection.js":
-            self._send_file(
-                STATIC_DIR / "selection.js",
-                "text/javascript; charset=utf-8",
-                no_store=True,
-            )
-            return
         if path == "/pair":
             self._send_file(
                 STATIC_DIR / "pair.html",
@@ -261,7 +217,7 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/export/svg":
             page = self.server.session.document.page()
-            svg = Document._page_to_svg(page, assets=self.server.session.assets)
+            svg = page_to_svg(page, assets=self.server.session.assets)
             raw = svg.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "image/svg+xml; charset=utf-8")
@@ -281,22 +237,19 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))
+            download_name = export_filename(
+                product="apeSketch", revision=self.server.session.document.revision
+            )
             self.send_header(
                 "Content-Disposition",
-                f'attachment; filename="{export_filename(product="apeSketch", revision=self.server.session.document.revision)}"',
+                f'attachment; filename="{download_name}"',
             )
             self.send_header("Cache-Control", "no-store")
             self._cors()
             self.end_headers()
             self.wfile.write(raw)
             return
-        if self._try_brand_file(path):
-            return
         if path == "/api/pair/qr.svg":
-            info = self.server.session.pair_info(
-                host=self.server.advertise_host,
-                port=self.server.ws_port,
-            )
             board = f"http://{self.server.advertise_host}:{self.server.server_address[1]}/"
             try:
                 svg = board_qr_svg(board)
@@ -310,6 +263,8 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(raw)
+            return
+        if not path.startswith("/api/") and self._try_static_file(path):
             return
         self._send_json(404, {"error": f"unknown path {path}"})
 
@@ -521,23 +476,35 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
-    _BRAND_MIME = {
+    _STATIC_MIME = {
         ".ico": "image/x-icon",
         ".png": "image/png",
         ".svg": "image/svg+xml",
         ".css": "text/css",
         ".ttf": "font/ttf",
+        ".woff2": "font/woff2",
+        ".js": "text/javascript; charset=utf-8",
+        ".mjs": "text/javascript; charset=utf-8",
+        ".html": "text/html; charset=utf-8",
     }
+    # Client code should always be fresh during development; assets may cache.
+    _STATIC_NO_STORE = {".js", ".mjs", ".css", ".html"}
 
-    def _try_brand_file(self, path: str) -> bool:
-        rel: str | None = None
+    def _try_static_file(self, path: str) -> bool:
+        """Serve any whitelisted file under static/ (client modules, brand, fonts)."""
         if path == "/favicon.ico":
             rel = "favicon.ico"
         elif path == "/apple-touch-icon.png":
             rel = "apple-touch-icon.png"
         elif path.startswith("/brand/"):
             rel = path[len("/brand/") :]
-        if rel is None or not rel or ".." in Path(rel).parts:
+        else:
+            rel = path.lstrip("/")
+        if not rel or ".." in Path(rel).parts:
+            return False
+        suffix = Path(rel).suffix.lower()
+        mime = self._STATIC_MIME.get(suffix)
+        if mime is None:
             return False
         candidate = (STATIC_DIR / rel).resolve()
         try:
@@ -546,8 +513,7 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
             return False
         if not candidate.is_file():
             return False
-        mime = self._BRAND_MIME.get(candidate.suffix.lower(), "application/octet-stream")
-        self._send_file(candidate, mime)
+        self._send_file(candidate, mime, no_store=suffix in self._STATIC_NO_STORE)
         return True
 
     def _send_file(self, path: Path, content_type: str, *, no_store: bool = False) -> None:
@@ -577,155 +543,7 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
         self.close_connection = True
 
 
-async def _ws_handler(websocket: Any, session: SketchSession) -> None:
-    request = getattr(websocket, "request", None)
-    path = getattr(request, "path", "") if request is not None else ""
-    query = parse_qs(urlparse(path).query)
-    room = (query.get("room") or [""])[0]
-    token = (query.get("token") or [""])[0]
-    try:
-        session.authorize(room, token)
-    except DocumentError:
-        await websocket.close(code=4401, reason="unauthorized")
-        return
-
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-
-    def on_message(message: dict[str, Any]) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, message)
-
-    session.subscribe(on_message)
-    try:
-        await websocket.send(json.dumps(session.snapshot_message()))
-
-        async def sender() -> None:
-            while True:
-                message = await queue.get()
-                await websocket.send(json.dumps(message))
-
-        async def receiver() -> None:
-            async for raw in websocket:
-                try:
-                    parsed_msg: object = json.loads(raw)
-                except json.JSONDecodeError:
-                    await websocket.send(json.dumps({"type": "error", "message": "invalid json"}))
-                    continue
-                if not isinstance(parsed_msg, dict):
-                    await websocket.send(
-                        json.dumps({"type": "error", "message": "object required"})
-                    )
-                    continue
-                msg_type = parsed_msg.get("type")
-                if msg_type == "hello":
-                    continue
-                if msg_type == "op":
-                    op_payload = parsed_msg.get("op")
-                    if not isinstance(op_payload, dict):
-                        await websocket.send(
-                            json.dumps({"type": "error", "message": "op payload required"})
-                        )
-                        continue
-                    try:
-                        session.apply_dict(
-                            {str(k): v for k, v in op_payload.items()},
-                            exclude=on_message,
-                        )
-                    except DocumentError as exc:
-                        await websocket.send(json.dumps({"type": "error", "message": str(exc)}))
-                    continue
-                if msg_type == "ops":
-                    ops_payload = parsed_msg.get("ops")
-                    if not isinstance(ops_payload, list) or not ops_payload:
-                        await websocket.send(
-                            json.dumps({"type": "error", "message": "ops array required"})
-                        )
-                        continue
-                    batch: list[dict[str, Any]] = []
-                    for item in ops_payload:
-                        if not isinstance(item, dict):
-                            await websocket.send(
-                                json.dumps({"type": "error", "message": "ops entries must be objects"})
-                            )
-                            batch = []
-                            break
-                        batch.append({str(k): v for k, v in item.items()})
-                    if not batch:
-                        continue
-                    try:
-                        session.apply_many_dicts(batch, exclude=on_message)
-                    except DocumentError as exc:
-                        await websocket.send(json.dumps({"type": "error", "message": str(exc)}))
-                    continue
-                if "op" in parsed_msg:
-                    try:
-                        session.apply_dict(
-                            {str(k): v for k, v in parsed_msg.items()},
-                            exclude=on_message,
-                        )
-                    except DocumentError as exc:
-                        await websocket.send(json.dumps({"type": "error", "message": str(exc)}))
-                    continue
-                await websocket.send(json.dumps({"type": "error", "message": "unknown message"}))
-
-        await asyncio.gather(sender(), receiver())
-    finally:
-        session.unsubscribe(on_message)
-
-
-async def _run_ws(
-    session: SketchSession,
-    host: str,
-    port: int,
-    *,
-    on_bound: Any | None = None,
-) -> None:
-    try:
-        from websockets.asyncio.server import serve
-    except ImportError as exc:
-        raise SystemExit("WebSocket host requires: pip install apeSketch") from exc
-
-    async def handler(websocket: Any) -> None:
-        await _ws_handler(websocket, session)
-
-    last_error: OSError | None = None
-    for candidate in iter_ws_ports(port):
-        try:
-            async with serve(handler, host, candidate) as server:
-                sockets = getattr(server, "sockets", None) or []
-                bound = int(sockets[0].getsockname()[1]) if sockets else int(candidate)
-                if on_bound is not None:
-                    on_bound(bound)
-                await asyncio.Future()
-                return
-        except OSError as exc:
-            last_error = exc
-            continue
-    raise OSError(f"no free WebSocket port starting at {port}") from last_error
-
-
-def _resolve_startup_document(
-    store: SessionStore,
-    *,
-    load: str | None,
-    resume: bool,
-) -> tuple[Document, str | None, str]:
-    """Return (document, session_id, title) for host startup."""
-    if load:
-        candidate = Path(load)
-        if candidate.is_file():
-            return Document.load(candidate), None, candidate.stem
-        meta, doc = store.load(load)
-        return doc, meta.id, meta.title
-    if resume:
-        latest = store.latest()
-        if latest is not None:
-            meta, doc = store.load(latest.id)
-            return doc, meta.id, meta.title
-    return Document(), None, "Untitled"
-
-
-def _bind_http(
+def bind_http(
     host: str,
     preferred_port: int,
     session: SketchSession,
@@ -757,176 +575,11 @@ def _bind_http(
     ) from last_error
 
 
-def _write_live_stamp(
-    paths: InstancePaths,
-    http: SessionHttpServer,
-    *,
-    advertise_host: str,
-) -> None:
-    write_stamp(
-        paths.stamp,
-        HostStamp(
-            pid=os.getpid(),
-            http_port=int(http.server_address[1]),
-            ws_port=int(http.ws_port),
-            root=str(paths.root),
-            advertise_host=advertise_host,
-            http_only=http.http_only,
-        ),
-    )
-
-
-def _print_banner(
-    session: SketchSession,
-    paths: InstancePaths,
-    *,
-    advertise_host: str,
-    http_port: int,
-    http_only: bool,
-) -> None:
-    board_url = f"http://{advertise_host}:{http_port}/"
-    print(f"apeSketch board    {board_url}", flush=True)
-    print(f"apeSketch instance {paths.root}", flush=True)
-    print(f"apeSketch pair     http://{advertise_host}:{http_port}/pair", flush=True)
-    print(f"apeSketch room     {session.room_code}", flush=True)
-    if session.session_id:
-        print(
-            f"apeSketch session  {session.session_id} · {session.session_title}",
-            flush=True,
-        )
-    else:
-        print(f"apeSketch sessions {paths.sessions}", flush=True)
-    if http_only:
-        print("apeSketch mode     HTTP only (no WS)", flush=True)
-
-
-def _attach_existing(stamp: HostStamp, paths: InstancePaths, *, no_browser: bool) -> None:
-    print(f"apeSketch attach   http://127.0.0.1:{stamp.http_port}/", flush=True)
-    print(f"apeSketch instance {paths.root}", flush=True)
-    print(f"apeSketch pid      {stamp.pid}", flush=True)
-    if stamp.advertise_host and stamp.advertise_host not in ("127.0.0.1", "0.0.0.0"):
-        print(
-            f"apeSketch board    http://{stamp.advertise_host}:{stamp.http_port}/",
-            flush=True,
-        )
-    if not no_browser:
-        webbrowser.open(f"http://127.0.0.1:{stamp.http_port}/")
-
-
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="apeSketch ink Session host")
-    parser.add_argument("--host", default=DEFAULT_HOST)
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=DEFAULT_PORT,
-        help="preferred HTTP port (0 = ephemeral; busy preferred pair uses the next)",
-    )
-    parser.add_argument("--ws-port", type=int, default=None, help="defaults to HTTP port + 1")
-    parser.add_argument("--root", default=None, help="instance directory (sessions/assets/perf)")
-    parser.add_argument("--sessions", default=None, help="session library directory")
-    parser.add_argument("--assets", default=None, help="asset directory")
-    parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument(
-        "--http-only",
-        action="store_true",
-        help="serve HTTP board without WebSocket (POST /api/op only)",
-    )
-    parser.add_argument(
-        "--load",
-        default=None,
-        help="open a saved session id or a .apesketch.json path",
-    )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="open the most recently updated saved session",
-    )
-    args = parser.parse_args(argv)
+    """Console-script entry point; the implementation lives in host.cli."""
+    from apeSketch.host.cli import main as cli_main
 
-    paths = resolve_instance(
-        root=args.root,
-        sessions=args.sessions or SESSIONS_DIR,
-        assets=args.assets or ASSET_DIR,
-    )
-    existing = live_host(paths)
-    if existing is not None:
-        _attach_existing(existing, paths, no_browser=args.no_browser)
-        return
-
-    store = SessionStore(paths.sessions)
-    document, session_id, session_title = _resolve_startup_document(
-        store,
-        load=args.load,
-        resume=args.resume,
-    )
-    session = SketchSession(document, assets=AssetStore(paths.assets))
-    session.bind_session(session_id, session_title)
-    advertise = _lan_ip()
-    planned_ws = args.ws_port if args.ws_port is not None else (
-        0 if args.port == 0 else args.port + 1
-    )
-
-    http = _bind_http(
-        args.host,
-        args.port,
-        session,
-        advertise_host=advertise,
-        ws_port=planned_ws,
-        store=store,
-        instance=paths,
-        http_only=args.http_only,
-    )
-    http_port = int(http.server_address[1])
-    if args.ws_port is None:
-        http.ws_port = 0 if args.port == 0 else http_port + 1
-    _thread = threading.Thread(target=http.serve_forever, daemon=True)
-    _thread.start()
-    if not wait_until_up(http_port):
-        http.shutdown()
-        http.server_close()
-        raise OSError(f"apeSketch HTTP host did not answer on port {http_port}")
-    _write_live_stamp(paths, http, advertise_host=advertise)
-    _print_banner(
-        session,
-        paths,
-        advertise_host=advertise,
-        http_port=http_port,
-        http_only=args.http_only,
-    )
-
-    if not args.no_browser:
-        webbrowser.open(f"http://127.0.0.1:{http_port}/")
-
-    def shutdown() -> None:
-        http.flush_autosave()
-        clear_stamp(paths.stamp)
-        http.shutdown()
-        http.server_close()
-
-    if args.http_only:
-        try:
-            threading.Event().wait()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            shutdown()
-        return
-
-    def on_ws_bound(bound: int) -> None:
-        http.ws_port = bound
-        _write_live_stamp(paths, http, advertise_host=advertise)
-        pair = session.pair_info(host=advertise, port=bound)
-        print(f"apeSketch ws       {pair['ws']}", flush=True)
-
-    try:
-        asyncio.run(
-            _run_ws(session, args.host, http.ws_port, on_bound=on_ws_bound)
-        )
-    except KeyboardInterrupt:
-        pass
-    finally:
-        shutdown()
+    cli_main(argv)
 
 
 if __name__ == "__main__":

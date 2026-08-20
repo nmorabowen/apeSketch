@@ -9,13 +9,14 @@ import pytest
 
 from apeSketch.document import Document
 from apeSketch.errors import DocumentError
+from apeSketch.export import page_to_svg
 from apeSketch.ops import (
+    SCHEMA_ID,
     AppendPoints,
     BeginStroke,
     ClearPage,
     EndStroke,
     EraseStroke,
-    SCHEMA_ID,
     SetBackground,
 )
 from apeSketch.types import InkPoint, StrokeStyle
@@ -105,7 +106,7 @@ def test_ink_kinds_and_background() -> None:
     assert stroke.style.kind == "chalk"
     assert stroke.style.color == "#ffffff"
 
-    svg = Document._page_to_svg(doc.page())
+    svg = page_to_svg(doc.page())
     assert 'fill="#1c211c"' in svg
     assert 'data-kind="chalk"' in svg
     assert 'data-tip="round"' in svg
@@ -136,7 +137,7 @@ def test_svg_pressure_varying_width() -> None:
         )
     )
     doc.apply(EndStroke(stroke_id="press"))
-    svg = Document._page_to_svg(doc.page())
+    svg = page_to_svg(doc.page())
     assert svg.count('data-stroke-id="press"') >= 2
     assert 'stroke-width="' in svg
     widths = []

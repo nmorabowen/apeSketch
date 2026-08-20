@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from tests.test_document import _draw_stroke
 
 from apeSketch.document import Document
 from apeSketch.errors import DocumentError
 from apeSketch.ops import MoveStrokes, SetStrokeStyle, op_from_dict, op_to_dict
-
-from tests.test_document import _draw_stroke
 
 
 def test_move_strokes_translates_points() -> None:

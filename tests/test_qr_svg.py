@@ -14,5 +14,5 @@ def test_board_qr_svg_contains_svg_root() -> None:
     except DocumentError:
         pytest.skip("segno not installed")
     assert "<svg" in svg
-    assert "http://192.168.1.10:9968/" not in svg or True  # payload is modules, not plaintext URL required
+    # QR payload is rendered as modules; the plaintext URL need not appear.
     assert len(svg) > 100

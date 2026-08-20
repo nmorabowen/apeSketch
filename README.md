@@ -89,15 +89,20 @@ Do **not** rely on apeSketch’s local `.venv` for day-to-day work; keep deps in
 ## Layout
 
 ```
-AProjects/           ADRs, memory, specs
+AProjects/           ADRs, memory, specs, guides
 src/apeSketch/       public Python package
-  document.py        ink Document
-  ops.py             typed Ops
+  types.py           object model (strokes, images, text, pages)
+  ops/               typed Ops, one module per domain (self-registering)
+  document.py        ink Document (op-log state machine)
+  export.py          egress: SVG render + agent bundle
   session.py         SketchSession
-  host/              LAN HTTP + WS + static board
+  host/              server.py (HTTP) · ws.py (WebSocket) · cli.py · static/ board
 docs/                GitHub Pages
 tests/
 ```
+
+Layout rules and growth conventions: [ADR 0011](AProjects/adrs/0011-library-layout-organic-growth.md)
+and [`AProjects/guides/adding-an-op.md`](AProjects/guides/adding-an-op.md).
 
 ## Prototype plan
 

@@ -507,10 +507,6 @@
     };
   }
 
-  function ruleBandWorld() {
-    return RULER_BODY_SCREEN_PX / view.scale;
-  }
-
   function snapToleranceWorld() {
     return RULE_SNAP_SCREEN_PX / view.scale;
   }
@@ -779,23 +775,6 @@
       return { mode: "move-guide" };
     }
     return null;
-  }
-
-  function moveRuleToPoint(x, y) {
-    if (!rule) return;
-    if (rule.kind === "ruler") {
-      rule.cx = x;
-      rule.cy = y;
-    } else {
-      const cx = (rule.x1 + rule.x2) / 2;
-      const cy = (rule.y1 + rule.y2) / 2;
-      const dx = x - cx;
-      const dy = y - cy;
-      rule.x1 += dx;
-      rule.y1 += dy;
-      rule.x2 += dx;
-      rule.y2 += dy;
-    }
   }
 
   function applyRuleGesture(p) {
@@ -1768,16 +1747,6 @@
       italic: run.italic != null ? !!run.italic : !!text.italic,
       color: run.color != null ? run.color : text.color || "#111111",
     };
-  }
-
-  function measureRunsWidth(targetCtx, runs, text) {
-    let w = 0;
-    for (const run of runs) {
-      const style = resolveRunStyle(run, text);
-      targetCtx.font = textFontCss(style.font_size, style.bold, style.italic);
-      w += targetCtx.measureText(style.text).width;
-    }
-    return w;
   }
 
   /** Wrap a block's runs into visual lines of {runs, height}. */
@@ -3574,11 +3543,6 @@
     return Array.isArray(p) ? { x: p[0], y: p[1] } : { x: p.x, y: p.y };
   }
 
-  function pressureOf(p) {
-    if (Array.isArray(p)) return p.length > 3 ? p[3] : 0.5;
-    return typeof p.pressure === "number" ? p.pressure : 0.5;
-  }
-
   function strokeLen(points) {
     if (!points) return 0;
     if (points.packed) return points.count | 0;
@@ -3656,10 +3620,6 @@
     const sat = Math.min(Math.max(speed, 0) / ref, 1);
     w *= 1 + (cfg.velocity || 0) * sat;
     return w;
-  }
-
-  function widthAtPressure(baseWidth, pressure, kind, tip) {
-    return widthAtSample(baseWidth, pressure, 0, kind, tip);
   }
 
   function segmentSpeed(a, b) {
@@ -3942,10 +3902,6 @@
     drawPressureSegments(display, style, target, "pen", tip, 1);
   }
 
-  function drawStroke(stroke, provisionalPoints, opts) {
-    drawStrokePoints(provisionalPoints || stroke.points || [], strokeStyleOf(stroke), opts);
-  }
-
   function runsFromAlive(points, alive) {
     const runs = [];
     let run = [];
@@ -4125,19 +4081,6 @@
     invalidateInk();
   }
 
-  function viewCacheKey() {
-    // Includes pan — only for debugging / overlay; caches use viewStableKey.
-    return [
-      view.x.toFixed(2),
-      view.y.toFixed(2),
-      view.scale.toFixed(4),
-      canvas.width,
-      canvas.height,
-      dpr,
-      pageBackground,
-    ].join("|");
-  }
-
   function viewStableKey() {
     // Pan-independent. Translation is applied as a blit offset.
     return [
@@ -4147,11 +4090,6 @@
       dpr,
       pageBackground,
     ].join("|");
-  }
-
-  function sessionSkipKey() {
-    if (!partialSession) return "";
-    return [...partialSession.originals.keys()].sort().join(",");
   }
 
   function applyWorldTransform(target) {
@@ -4728,10 +4666,6 @@
     }
     if (paint) scheduleRedraw();
     bumpDoc(op.op, op.stroke_id);
-  }
-
-  function emitOp(op) {
-    emitOps([op]);
   }
 
   function emitOps(ops) {

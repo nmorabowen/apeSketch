@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apeSketch.host.server import main
+from apeSketch.host.cli import main
 
 if __name__ == "__main__":
     main()
