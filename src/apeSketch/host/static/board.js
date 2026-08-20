@@ -7,11 +7,13 @@
   const zoomLabel = document.getElementById("zoom-label");
   const btnPan = document.getElementById("btn-pan");
   const btnPen = document.getElementById("btn-pen");
+  const btnSelect = document.getElementById("btn-select");
   const btnEraseStroke = document.getElementById("btn-erase-stroke");
   const btnErasePartial = document.getElementById("btn-erase-partial");
   const btnText = document.getElementById("btn-text");
   const textEditor = document.getElementById("text-editor");
   const dockStyle = document.getElementById("dock-style");
+  const dockSelect = document.getElementById("dock-select");
   const dockEraser = document.getElementById("dock-eraser");
   const dockText = document.getElementById("dock-text");
   const dockExport = document.getElementById("dock-export");
@@ -33,6 +35,10 @@
   const fileImageInput = document.getElementById("file-image");
   const fileOpenInput = document.getElementById("file-open");
   const btnRecord = document.getElementById("btn-record");
+  const btnPickTap = document.getElementById("btn-pick-tap");
+  const btnPickRect = document.getElementById("btn-pick-rect");
+  const btnPickLasso = document.getElementById("btn-pick-lasso");
+  const Sel = window.ApeSketchSelection;
 
   let pair = null;
   let ws = null;
@@ -52,7 +58,7 @@
   const MAX_SCALE = 8;
   const ZOOM_STEP = 1.15;
 
-  /** @type {"pen"|"erase-stroke"|"erase-partial"|"text"} */
+  /** @type {"pen"|"erase-stroke"|"erase-partial"|"text"|"select"} */
   let tool = "pen";
   let toolBeforeEraserTip = "pen";
   let eraserTipActive = false;
@@ -62,7 +68,7 @@
   let inkTip = "round";
   let inkColor = "#000000";
   let inkWidth = 2.5;
-  let pageBackground = "#f4f0e6";
+  let pageBackground = "#fafaf7";
   let styleDockOpen = false;
   let eraserDockOpen = false;
   let textDockOpen = false;
@@ -77,6 +83,14 @@
   let selectedTextId = null;
   let textGesture = null;
   let textPress = null;
+  /** @type {Set<string>} */
+  const selectedIds = new Set();
+  /** @type {"tap"|"rect"|"lasso"} */
+  let pickMode = "rect";
+  let selectDrag = null;
+  let selectionMoveGesture = null;
+  let selectionResizeGesture = null;
+  let selectDockOpen = false;
   let editingTextId = null;
   let editingTextBaseline = "";
   /** @type {{ textId: string, selectAll: boolean } | null} */
@@ -384,15 +398,51 @@
       textCreateDrag = null;
       scheduleOverlay();
     }
+    if (selectDrag) {
+      selectDrag = null;
+      scheduleOverlay();
+    }
     tool = next;
     btnPen.classList.toggle("active", tool === "pen");
+    if (btnSelect) btnSelect.classList.toggle("active", tool === "select");
     btnEraseStroke.classList.toggle("active", tool === "erase-stroke");
     btnErasePartial.classList.toggle("active", tool === "erase-partial");
     if (btnText) btnText.classList.toggle("active", tool === "text");
+    if (tool === "select") setSelectDockOpen(true);
+    else setSelectDockOpen(false);
     if (tool === "text") setTextDockOpen(true);
     else setTextDockOpen(false);
     updateCursor();
     scheduleOverlay();
+  }
+
+  function setSelectDockOpen(open) {
+    selectDockOpen = !!open;
+    if (!dockSelect) return;
+    dockSelect.classList.toggle("open", selectDockOpen);
+    if (selectDockOpen) {
+      dockSelect.removeAttribute("hidden");
+      setStyleDockOpen(false);
+      setEraserDockOpen(false);
+      setTextDockOpen(false);
+      setExportDockOpen(false);
+      setSessionsDockOpen(false);
+      syncPickModeButtons();
+    } else {
+      dockSelect.setAttribute("hidden", "");
+    }
+  }
+
+  function syncPickModeButtons() {
+    if (btnPickTap) btnPickTap.classList.toggle("active", pickMode === "tap");
+    if (btnPickRect) btnPickRect.classList.toggle("active", pickMode === "rect");
+    if (btnPickLasso) btnPickLasso.classList.toggle("active", pickMode === "lasso");
+  }
+
+  function setPickMode(mode) {
+    pickMode = mode === "tap" || mode === "lasso" ? mode : "rect";
+    syncPickModeButtons();
+    setStatus(`pick: ${pickMode}`);
   }
 
   function setStyleDockOpen(open) {
@@ -665,6 +715,7 @@
     }
     setSelectedImage(null);
     setSelectedText(null);
+    clearSelection();
     if (textEditor && !textEditor.hidden) {
       textEditor.hidden = true;
       textEditor.setAttribute("hidden", "");
@@ -731,13 +782,13 @@
   }
 
   function applyChromeTheme(color) {
-    const hex = normalizeHex(color) || "#f4f0e6";
+    const hex = normalizeHex(color) || "#fafaf7";
     document.documentElement.style.setProperty("--paper", hex);
     document.body.classList.toggle("theme-dark", isDarkBackground(hex));
   }
 
   function applyPageBackground(color) {
-    const hex = normalizeHex(color) || "#f4f0e6";
+    const hex = normalizeHex(color) || "#fafaf7";
     pageBackground = hex;
     const page =
       documentState &&
@@ -777,12 +828,17 @@
 
   function setInkColor(color) {
     inkColor = color;
-    if (tool !== "pen") setTool("pen");
+    syncColorButtons();
+    if (tool === "select" && selectedIds.size > 0) {
+      pushSelectionStyle({ color });
+      return;
+    }
+    if (tool !== "pen" && tool !== "select") setTool("pen");
     syncColorButtons();
   }
 
   function setBackground(color) {
-    const hex = normalizeHex(color) || "#f4f0e6";
+    const hex = normalizeHex(color) || "#fafaf7";
     sendOp({ op: "set_background", color: hex, page_id: "p0" });
   }
 
@@ -791,6 +847,7 @@
     canvas.classList.toggle("panning", panMode || spaceHeld || isPanning);
     canvas.classList.toggle("dragging", isPanning);
     canvas.classList.toggle("erasing", erasing && !panMode && !spaceHeld && !isPanning);
+    canvas.classList.toggle("selecting", tool === "select" && !panMode && !spaceHeld && !isPanning);
   }
 
   function isStylusEraser(ev) {
@@ -1445,18 +1502,69 @@
   }
 
   function setSelectedText(textId) {
-    if (selectedImageId) setSelectedImage(null);
-    selectedTextId = textId || null;
-    if (selectedTextId) loadTextStyleFromObject(getText(selectedTextId));
-    scheduleOverlay();
+    if (textId) {
+      if (editingTextId) commitTextEditor();
+      setSelection([Sel.refKey("text", textId)]);
+      loadTextStyleFromObject(getText(textId));
+    } else {
+      for (const key of [...selectedIds]) {
+        if (key.startsWith("text:")) selectedIds.delete(key);
+      }
+      syncLegacySelectionIds();
+      scheduleOverlay();
+    }
   }
 
   function setSelectedImage(imageId) {
     if (imageId) {
       if (editingTextId) commitTextEditor();
-      selectedTextId = null;
+      setSelection([Sel.refKey("image", imageId)]);
+    } else {
+      for (const key of [...selectedIds]) {
+        if (key.startsWith("image:")) selectedIds.delete(key);
+      }
+      syncLegacySelectionIds();
+      scheduleOverlay();
     }
-    selectedImageId = imageId || null;
+  }
+
+  function syncLegacySelectionIds() {
+    selectedImageId = null;
+    selectedTextId = null;
+    for (const key of selectedIds) {
+      const { kind, id } = Sel.parseRef(key);
+      if (kind === "image") selectedImageId = id;
+      else if (kind === "text") selectedTextId = id;
+    }
+  }
+
+  function clearSelection() {
+    selectedIds.clear();
+    selectedImageId = null;
+    selectedTextId = null;
+    scheduleOverlay();
+  }
+
+  function setSelection(keys, { additive = false } = {}) {
+    if (!additive) selectedIds.clear();
+    for (const k of keys) selectedIds.add(k);
+    syncLegacySelectionIds();
+    if (selectedTextId) loadTextStyleFromObject(getText(selectedTextId));
+    scheduleOverlay();
+  }
+
+  function toggleSelectionKey(key) {
+    if (selectedIds.has(key)) selectedIds.delete(key);
+    else selectedIds.add(key);
+    syncLegacySelectionIds();
+    if (selectedTextId) loadTextStyleFromObject(getText(selectedTextId));
+    scheduleOverlay();
+  }
+
+  function removeSelectionKey(key) {
+    if (!selectedIds.has(key)) return;
+    selectedIds.delete(key);
+    syncLegacySelectionIds();
     scheduleOverlay();
   }
 
@@ -1675,6 +1783,390 @@
   function getImage(imageId) {
     const page = getPage();
     return page && page.images ? page.images[imageId] : null;
+  }
+
+  function getStroke(strokeId) {
+    const page = getPage();
+    return page && page.strokes ? page.strokes[strokeId] : null;
+  }
+
+  function boxBounds(obj) {
+    return {
+      minX: obj.x,
+      minY: obj.y,
+      maxX: obj.x + obj.width,
+      maxY: obj.y + obj.height,
+    };
+  }
+
+  function hitTopStrokeAt(x, y, radius) {
+    const page = getPage();
+    if (!page || !page.stroke_order) return null;
+    const r = radius != null ? radius : Math.max(4 / view.scale, 3);
+    for (let i = page.stroke_order.length - 1; i >= 0; i--) {
+      const sid = page.stroke_order[i];
+      const stroke = page.strokes && page.strokes[sid];
+      if (stroke && strokeHitsPoint(stroke, x, y, r)) return sid;
+    }
+    return null;
+  }
+
+  function pickTopObjectAt(x, y) {
+    const tid = hitTopTextAt(x, y);
+    if (tid) return Sel.refKey("text", tid);
+    const iid = hitTopImageAt(x, y);
+    if (iid) return Sel.refKey("image", iid);
+    const sid = hitTopStrokeAt(x, y);
+    if (sid) return Sel.refKey("stroke", sid);
+    return null;
+  }
+
+  function queryObjectsInRect(x0, y0, x1, y1) {
+    const page = getPage();
+    const keys = [];
+    if (!page) return keys;
+    const pickRect = Sel.normalizeRect(x0, y0, x1, y1);
+
+    for (const iid of page.image_order || []) {
+      const image = page.images && page.images[iid];
+      if (image && Sel.rectsIntersect(pickRect, boxBounds(image))) {
+        keys.push(Sel.refKey("image", iid));
+      }
+    }
+    for (const tid of page.text_order || []) {
+      const text = page.texts && page.texts[tid];
+      if (text && Sel.rectsIntersect(pickRect, boxBounds(text))) {
+        keys.push(Sel.refKey("text", tid));
+      }
+    }
+
+    const cx0 = Math.floor(pickRect.minX / SPATIAL_CELL);
+    const cx1 = Math.floor(pickRect.maxX / SPATIAL_CELL);
+    const cy0 = Math.floor(pickRect.minY / SPATIAL_CELL);
+    const cy1 = Math.floor(pickRect.maxY / SPATIAL_CELL);
+    const index = ensureSpatial(page);
+    const seen = new Set();
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cy = cy0; cy <= cy1; cy++) {
+        const bucket = index.get(`${cx}:${cy}`);
+        if (!bucket) continue;
+        for (const sid of bucket) {
+          if (seen.has(sid)) continue;
+          seen.add(sid);
+          const stroke = page.strokes[sid];
+          if (!stroke) continue;
+          const pad = ((stroke.style && stroke.style.width) || 2) / 2;
+          const bb = strokeBBox(stroke, pad);
+          if (Sel.rectsIntersect(pickRect, bb)) keys.push(Sel.refKey("stroke", sid));
+        }
+      }
+    }
+    return keys;
+  }
+
+  function queryObjectsInPolygon(poly) {
+    const page = getPage();
+    const keys = [];
+    if (!page || !poly || poly.length < 3) return keys;
+
+    for (const iid of page.image_order || []) {
+      const image = page.images && page.images[iid];
+      if (image && Sel.bboxCenterInPolygon(boxBounds(image), poly)) {
+        keys.push(Sel.refKey("image", iid));
+      }
+    }
+    for (const tid of page.text_order || []) {
+      const text = page.texts && page.texts[tid];
+      if (text && Sel.bboxCenterInPolygon(boxBounds(text), poly)) {
+        keys.push(Sel.refKey("text", tid));
+      }
+    }
+    for (const sid of page.stroke_order || []) {
+      const stroke = page.strokes && page.strokes[sid];
+      if (!stroke) continue;
+      const pad = ((stroke.style && stroke.style.width) || 2) / 2;
+      const bb = strokeBBox(stroke, pad);
+      if (Sel.bboxCenterInPolygon(bb, poly)) keys.push(Sel.refKey("stroke", sid));
+    }
+    return keys;
+  }
+
+  function boundsOfSelectionKey(key) {
+    const { kind, id } = Sel.parseRef(key);
+    if (kind === "stroke") {
+      const stroke = getStroke(id);
+      if (!stroke) return null;
+      const pad = ((stroke.style && stroke.style.width) || 2) / 2 + 2;
+      return strokeBBox(stroke, pad);
+    }
+    if (kind === "image") {
+      const image = getImage(id);
+      return image ? boxBounds(image) : null;
+    }
+    if (kind === "text") {
+      const text = getText(id);
+      return text ? boxBounds(text) : null;
+    }
+    return null;
+  }
+
+  function getSelectionBounds() {
+    const boxes = [];
+    for (const key of selectedIds) {
+      const bb = boundsOfSelectionKey(key);
+      if (bb) boxes.push(bb);
+    }
+    return Sel.unionBounds(boxes);
+  }
+
+  function getSingleBoxSelection() {
+    if (selectedIds.size !== 1) return null;
+    const key = [...selectedIds][0];
+    const { kind, id } = Sel.parseRef(key);
+    if (kind === "image") return getImage(id);
+    if (kind === "text") return getText(id);
+    return null;
+  }
+
+  function captureSelectionSnapshots() {
+    const snaps = { strokes: {}, images: {}, texts: {} };
+    for (const key of selectedIds) {
+      const { kind, id } = Sel.parseRef(key);
+      if (kind === "stroke") {
+        const stroke = getStroke(id);
+        if (stroke) {
+          snaps.strokes[id] = (stroke.points || []).map((p) => pointAsList(p));
+        }
+      } else if (kind === "image") {
+        const image = getImage(id);
+        if (image && !image.locked) {
+          snaps.images[id] = {
+            x: image.x,
+            y: image.y,
+            width: image.width,
+            height: image.height,
+          };
+        }
+      } else if (kind === "text") {
+        const text = getText(id);
+        if (text && !text.locked) {
+          snaps.texts[id] = {
+            x: text.x,
+            y: text.y,
+            width: text.width,
+            height: text.height,
+          };
+        }
+      }
+    }
+    return snaps;
+  }
+
+  function applySelectionSnapshots(orig, dx, dy) {
+    for (const [id, points] of Object.entries(orig.strokes)) {
+      const stroke = getStroke(id);
+      if (!stroke) continue;
+      stroke.points = points.map((pt) => [pt[0] + dx, pt[1] + dy, pt[2], pt[3]]);
+      stroke._bbox = null;
+    }
+    for (const [id, box] of Object.entries(orig.images)) {
+      applyImageBoxLocal(id, {
+        x: box.x + dx,
+        y: box.y + dy,
+        width: box.width,
+        height: box.height,
+      });
+    }
+    for (const [id, box] of Object.entries(orig.texts)) {
+      applyTextBoxLocal(id, {
+        x: box.x + dx,
+        y: box.y + dy,
+        width: box.width,
+        height: box.height,
+      });
+    }
+  }
+
+  function commitSelectionMove(gesture) {
+    const dx = gesture.dx;
+    const dy = gesture.dy;
+    if (dx === 0 && dy === 0) return;
+    const ops = [];
+    const strokeIds = Object.keys(gesture.orig.strokes);
+    if (strokeIds.length) {
+      ops.push({
+        op: "move_strokes",
+        stroke_ids: strokeIds,
+        dx,
+        dy,
+        page_id: "p0",
+      });
+    }
+    for (const [id, orig] of Object.entries(gesture.orig.images)) {
+      const image = getImage(id);
+      if (!image || image.locked) continue;
+      if (image.x !== orig.x || image.y !== orig.y) {
+        ops.push({
+          op: "transform_image",
+          image_id: id,
+          x: image.x,
+          y: image.y,
+          width: image.width,
+          height: image.height,
+          page_id: "p0",
+        });
+      }
+    }
+    for (const [id, orig] of Object.entries(gesture.orig.texts)) {
+      const text = getText(id);
+      if (!text || text.locked) continue;
+      if (text.x !== orig.x || text.y !== orig.y) {
+        ops.push({
+          op: "transform_text",
+          text_id: id,
+          x: text.x,
+          y: text.y,
+          width: text.width,
+          height: text.height,
+          page_id: "p0",
+        });
+      }
+    }
+    if (ops.length) sendOps(ops, { paint: true });
+  }
+
+  function pushSelectionStyle(partial) {
+    const strokeIds = [];
+    const textIds = [];
+    for (const key of selectedIds) {
+      const { kind, id } = Sel.parseRef(key);
+      if (kind === "stroke") strokeIds.push(id);
+      else if (kind === "text") {
+        const text = getText(id);
+        if (text && !text.locked) textIds.push(id);
+      }
+    }
+    const ops = [];
+    if (partial.color != null && strokeIds.length) {
+      ops.push({
+        op: "set_stroke_style",
+        stroke_ids: strokeIds,
+        color: partial.color,
+        page_id: "p0",
+      });
+    }
+    if (partial.width != null && strokeIds.length) {
+      ops.push({
+        op: "set_stroke_style",
+        stroke_ids: strokeIds,
+        width: partial.width,
+        page_id: "p0",
+      });
+    }
+    if (partial.color != null) {
+      for (const tid of textIds) {
+        ops.push({
+          op: "set_text_style",
+          text_id: tid,
+          color: partial.color,
+          page_id: "p0",
+        });
+      }
+    }
+    if (ops.length) sendOps(ops, { paint: true });
+    setStatus(`updated ${selectedIds.size} selected`);
+  }
+
+  function deleteSelection() {
+    if (!selectedIds.size) return;
+    const ops = [];
+    for (const key of selectedIds) {
+      const { kind, id } = Sel.parseRef(key);
+      if (kind === "stroke") ops.push({ op: "erase_stroke", stroke_id: id, page_id: "p0" });
+      else if (kind === "image") ops.push({ op: "erase_image", image_id: id, page_id: "p0" });
+      else if (kind === "text") ops.push({ op: "erase_text", text_id: id, page_id: "p0" });
+    }
+    sendOps(ops, { paint: true });
+    clearSelection();
+  }
+
+  function tryBeginSelectionTransform(p) {
+    const singleBox = getSingleBoxSelection();
+    if (singleBox && !singleBox.locked) {
+      if (hitImageLockIcon(singleBox, p.x, p.y)) {
+        const key = [...selectedIds][0];
+        const { kind, id } = Sel.parseRef(key);
+        if (kind === "text") toggleTextLock(id);
+        else if (kind === "image") toggleImageLock(id);
+        return true;
+      }
+      const handle = hitImageHandle(singleBox, p.x, p.y);
+      if (handle) {
+        selectionResizeGesture = {
+          key: [...selectedIds][0],
+          handle,
+          keepAspect: false,
+          startX: p.x,
+          startY: p.y,
+          orig: {
+            x: singleBox.x,
+            y: singleBox.y,
+            width: singleBox.width,
+            height: singleBox.height,
+          },
+        };
+        return true;
+      }
+    }
+
+    const bounds = getSelectionBounds();
+    if (bounds && selectedIds.size > 0 && Sel.pointInRect(p.x, p.y, bounds)) {
+      selectionMoveGesture = {
+        startX: p.x,
+        startY: p.y,
+        dx: 0,
+        dy: 0,
+        orig: captureSelectionSnapshots(),
+      };
+      return true;
+    }
+    return false;
+  }
+
+  function commitSelectionResize(gesture) {
+    const { kind, id } = Sel.parseRef(gesture.key);
+    if (kind === "image") commitImageTransform(id);
+    else if (kind === "text") commitTextTransform(id);
+  }
+
+  function applySelectionResizeLocal(gesture, p) {
+    const dx = p.x - gesture.startX;
+    const dy = p.y - gesture.startY;
+    const box = resizeFromHandle(gesture.orig, gesture.handle, dx, dy, gesture.keepAspect);
+    const { kind, id } = Sel.parseRef(gesture.key);
+    if (kind === "image") applyImageBoxLocal(id, box);
+    else if (kind === "text") applyTextBoxLocal(id, box);
+  }
+
+  function finishSelectDrag() {
+    if (!selectDrag) return;
+    const drag = selectDrag;
+    selectDrag = null;
+    let keys = [];
+    if (drag.mode === "rect") {
+      keys = queryObjectsInRect(drag.startX, drag.startY, drag.curX, drag.curY);
+    } else if (drag.mode === "lasso") {
+      keys = queryObjectsInPolygon(drag.points);
+    }
+    if (drag.additive) {
+      for (const k of keys) selectedIds.add(k);
+      syncLegacySelectionIds();
+      if (selectedTextId) loadTextStyleFromObject(getText(selectedTextId));
+    } else {
+      setSelection(keys);
+    }
+    setStatus(keys.length ? `selected ${selectedIds.size}` : "selection cleared");
+    scheduleOverlay();
   }
 
   function imageHandlePoints(image) {
@@ -2426,10 +2918,11 @@
     const screenH = overlay.clientHeight;
     octx.setTransform(dpr, 0, 0, dpr, 0, 0);
     octx.clearRect(0, 0, screenW, screenH);
-    const selectedImage = selectedImageId ? getImage(selectedImageId) : null;
-    const selectedText = selectedTextId ? getText(selectedTextId) : null;
-    const selected = selectedImage || selectedText;
-    if (!selected && !eraserCursor && !textCreateDrag) return;
+    const singleBox = getSingleBoxSelection();
+    const groupBounds = selectedIds.size > 0 ? getSelectionBounds() : null;
+    const hasSelectionUi =
+      selectedIds.size > 0 || selectDrag || singleBox || selectedImageId || selectedTextId;
+    if (!hasSelectionUi && !eraserCursor && !textCreateDrag) return;
     octx.save();
     octx.translate(view.x, view.y);
     octx.scale(view.scale, view.scale);
@@ -2450,18 +2943,78 @@
       octx.setLineDash([]);
     }
 
-    if (selected) {
+    if (selectDrag) {
+      octx.lineWidth = 1.5 / view.scale;
+      octx.setLineDash([6 / view.scale, 4 / view.scale]);
+      if (selectDrag.mode === "rect") {
+        const rect = Sel.normalizeRect(
+          selectDrag.startX,
+          selectDrag.startY,
+          selectDrag.curX,
+          selectDrag.curY
+        );
+        octx.strokeStyle = "rgba(47, 93, 80, 0.9)";
+        octx.fillStyle = "rgba(47, 93, 80, 0.1)";
+        octx.fillRect(rect.x, rect.y, rect.width, rect.height);
+        octx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+      } else if (selectDrag.mode === "lasso" && selectDrag.points.length > 1) {
+        octx.strokeStyle = "rgba(47, 93, 80, 0.9)";
+        octx.fillStyle = "rgba(47, 93, 80, 0.08)";
+        octx.beginPath();
+        for (let i = 0; i < selectDrag.points.length; i++) {
+          const pt = selectDrag.points[i];
+          if (i === 0) octx.moveTo(pt.x, pt.y);
+          else octx.lineTo(pt.x, pt.y);
+        }
+        octx.closePath();
+        octx.fill();
+        octx.stroke();
+      }
+      octx.setLineDash([]);
+    }
+
+    for (const key of selectedIds) {
+      const bb = boundsOfSelectionKey(key);
+      if (!bb) continue;
+      const { kind } = Sel.parseRef(key);
+      if (kind === "stroke") {
+        octx.fillStyle = "rgba(47, 93, 80, 0.1)";
+        octx.strokeStyle = "rgba(47, 93, 80, 0.5)";
+        octx.lineWidth = 1 / view.scale;
+        octx.fillRect(bb.minX, bb.minY, bb.maxX - bb.minX, bb.maxY - bb.minY);
+        octx.strokeRect(bb.minX, bb.minY, bb.maxX - bb.minX, bb.maxY - bb.minY);
+      }
+    }
+
+    if (groupBounds && selectedIds.size > 1) {
+      octx.strokeStyle = "rgba(47, 93, 80, 0.85)";
+      octx.lineWidth = 1.5 / view.scale;
+      octx.setLineDash([5 / view.scale, 4 / view.scale]);
+      octx.strokeRect(
+        groupBounds.x,
+        groupBounds.y,
+        groupBounds.width,
+        groupBounds.height
+      );
+      octx.setLineDash([]);
+    }
+
+    const handleTarget =
+      singleBox ||
+      (selectedImageId ? getImage(selectedImageId) : null) ||
+      (selectedTextId ? getText(selectedTextId) : null);
+    if (handleTarget) {
       const hs = Math.max(7 / view.scale, 5);
-      octx.strokeStyle = selected.locked
+      octx.strokeStyle = handleTarget.locked
         ? "rgba(138, 59, 43, 0.9)"
         : "rgba(47, 93, 80, 0.95)";
       octx.fillStyle = "rgba(252, 251, 247, 0.95)";
       octx.lineWidth = 1.5 / view.scale;
-      octx.setLineDash(selected.locked ? [6 / view.scale, 4 / view.scale] : []);
-      octx.strokeRect(selected.x, selected.y, selected.width, selected.height);
+      octx.setLineDash(handleTarget.locked ? [6 / view.scale, 4 / view.scale] : []);
+      octx.strokeRect(handleTarget.x, handleTarget.y, handleTarget.width, handleTarget.height);
       octx.setLineDash([]);
-      if (!selected.locked) {
-        const points = imageHandlePoints(selected);
+      if (!handleTarget.locked) {
+        const points = imageHandlePoints(handleTarget);
         for (const id of IMAGE_HANDLES) {
           const pt = points[id];
           octx.fillRect(pt.x - hs / 2, pt.y - hs / 2, hs, hs);
@@ -2469,7 +3022,7 @@
           octx.strokeRect(pt.x - hs / 2, pt.y - hs / 2, hs, hs);
         }
       }
-      drawLockIcon(selected);
+      drawLockIcon(handleTarget);
     }
 
     if (eraserCursor) {
@@ -2699,7 +3252,7 @@
       documentState && documentState.pages
         ? documentState.pages[documentState.active_page_id || "p0"]
         : null;
-    pageBackground = (page && page.background) || pageBackground || "#f4f0e6";
+    pageBackground = (page && page.background) || pageBackground || "#fafaf7";
     ctx.fillStyle = pageBackground;
     ctx.fillRect(0, 0, screenW, screenH);
 
@@ -2926,6 +3479,7 @@
     } else if (op.op === "erase_stroke") {
       delete page.strokes[op.stroke_id];
       page.stroke_order = page.stroke_order.filter((id) => id !== op.stroke_id);
+      removeSelectionKey(Sel.refKey("stroke", op.stroke_id));
     } else if (op.op === "clear_page") {
       page.strokes = {};
       page.stroke_order = [];
@@ -2935,6 +3489,7 @@
       page.text_order = [];
       setSelectedImage(null);
       setSelectedText(null);
+      clearSelection();
       if (editingTextId) {
         editingTextId = null;
         if (textEditor) textEditor.hidden = true;
@@ -2963,6 +3518,7 @@
         page.image_order = page.image_order.filter((id) => id !== op.image_id);
       }
       if (selectedImageId === op.image_id) setSelectedImage(null);
+      removeSelectionKey(Sel.refKey("image", op.image_id));
     } else if (op.op === "transform_image") {
       if (!page.images) page.images = {};
       const image = page.images[op.image_id];
@@ -3038,6 +3594,7 @@
         page.text_order = page.text_order.filter((id) => id !== op.text_id);
       }
       if (selectedTextId === op.text_id) setSelectedText(null);
+      removeSelectionKey(Sel.refKey("text", op.text_id));
       if (editingTextId === op.text_id) {
         editingTextId = null;
         if (textEditor) textEditor.hidden = true;
@@ -3066,6 +3623,24 @@
           stroke.open = false;
           stroke._bbox = null;
         }
+      }
+    } else if (op.op === "move_strokes") {
+      for (const sid of op.stroke_ids || []) {
+        const stroke = page.strokes[sid];
+        if (!stroke) continue;
+        stroke.points = (stroke.points || []).map((p) => {
+          const pt = pointAsList(p);
+          return [pt[0] + op.dx, pt[1] + op.dy, pt[2], pt[3]];
+        });
+        stroke._bbox = null;
+      }
+    } else if (op.op === "set_stroke_style") {
+      for (const sid of op.stroke_ids || []) {
+        const stroke = page.strokes[sid];
+        if (!stroke) continue;
+        if (!stroke.style) stroke.style = { color: "#111111", width: 2, kind: "pen" };
+        if (op.color != null) stroke.style.color = op.color;
+        if (op.width != null) stroke.style.width = op.width;
       }
     }
     if (paint) scheduleRedraw();
@@ -3512,7 +4087,39 @@
       return;
     }
 
-    // Text tool handled above.
+    if (tool === "select") {
+      const additive = ev.shiftKey;
+      if (tryBeginSelectionTransform(p)) {
+        ev.preventDefault();
+        return;
+      }
+      if (pickMode === "tap") {
+        const hit = pickTopObjectAt(p.x, p.y);
+        if (hit) {
+          if (additive) toggleSelectionKey(hit);
+          else setSelection([hit]);
+          setStatus("selected");
+        } else if (!additive) {
+          clearSelection();
+        }
+        ev.preventDefault();
+        return;
+      }
+      selectDrag = {
+        mode: pickMode,
+        startX: p.x,
+        startY: p.y,
+        curX: p.x,
+        curY: p.y,
+        points: [{ x: p.x, y: p.y }],
+        additive,
+        pointerId: ev.pointerId,
+      };
+      scheduleOverlay();
+      ev.preventDefault();
+      return;
+    }
+
     if (tool === "pen") {
       const selectedImg = selectedImageId ? getImage(selectedImageId) : null;
       const selectedTxt = selectedTextId ? getText(selectedTextId) : null;
@@ -3672,8 +4279,7 @@
         ev.preventDefault();
         return;
       }
-      if (selectedImageId) setSelectedImage(null);
-      if (selectedTextId) setSelectedText(null);
+      clearSelection();
     }
 
     beginStrokeAt(p);
@@ -3768,6 +4374,39 @@
     if (textCreateDrag && textCreateDrag.pointerId === ev.pointerId) {
       textCreateDrag.curX = p.x;
       textCreateDrag.curY = p.y;
+      scheduleOverlay();
+      ev.preventDefault();
+      return;
+    }
+
+    if (selectDrag && selectDrag.pointerId === ev.pointerId) {
+      selectDrag.curX = p.x;
+      selectDrag.curY = p.y;
+      if (selectDrag.mode === "lasso") {
+        selectDrag.points.push({ x: p.x, y: p.y });
+      }
+      scheduleOverlay();
+      ev.preventDefault();
+      return;
+    }
+
+    if (selectionMoveGesture) {
+      selectionMoveGesture.dx = p.x - selectionMoveGesture.startX;
+      selectionMoveGesture.dy = p.y - selectionMoveGesture.startY;
+      applySelectionSnapshots(
+        selectionMoveGesture.orig,
+        selectionMoveGesture.dx,
+        selectionMoveGesture.dy
+      );
+      scheduleRedraw();
+      scheduleOverlay();
+      ev.preventDefault();
+      return;
+    }
+
+    if (selectionResizeGesture) {
+      applySelectionResizeLocal(selectionResizeGesture, p);
+      scheduleRedraw();
       scheduleOverlay();
       ev.preventDefault();
       return;
@@ -3876,6 +4515,37 @@
           pendingTextEdit = null;
         });
       }
+      ev.preventDefault();
+      return;
+    }
+
+    if (selectDrag && selectDrag.pointerId === ev.pointerId) {
+      try {
+        canvas.releasePointerCapture(ev.pointerId);
+      } catch (_) {}
+      finishSelectDrag();
+      ev.preventDefault();
+      return;
+    }
+
+    if (selectionMoveGesture) {
+      try {
+        canvas.releasePointerCapture(ev.pointerId);
+      } catch (_) {}
+      commitSelectionMove(selectionMoveGesture);
+      selectionMoveGesture = null;
+      scheduleOverlay();
+      ev.preventDefault();
+      return;
+    }
+
+    if (selectionResizeGesture) {
+      try {
+        canvas.releasePointerCapture(ev.pointerId);
+      } catch (_) {}
+      commitSelectionResize(selectionResizeGesture);
+      selectionResizeGesture = null;
+      scheduleOverlay();
       ev.preventDefault();
       return;
     }
@@ -4011,14 +4681,29 @@
         ev.preventDefault();
         return;
       }
+      if (selectDrag) {
+        selectDrag = null;
+        scheduleOverlay();
+        ev.preventDefault();
+        return;
+      }
+      if (selectionMoveGesture) {
+        applySelectionSnapshots(selectionMoveGesture.orig, 0, 0);
+        selectionMoveGesture = null;
+        scheduleRedraw();
+      }
+      if (selectionResizeGesture) {
+        const g = selectionResizeGesture;
+        const { kind, id } = Sel.parseRef(g.key);
+        if (kind === "image") applyImageBoxLocal(id, g.orig);
+        else if (kind === "text") applyTextBoxLocal(id, g.orig);
+        selectionResizeGesture = null;
+        scheduleRedraw();
+      }
       if (imageGesture) imageGesture = null;
       if (textGesture) textGesture = null;
-      if (selectedImageId) {
-        setSelectedImage(null);
-        ev.preventDefault();
-      }
-      if (selectedTextId) {
-        setSelectedText(null);
+      if (selectedIds.size > 0 || selectedImageId || selectedTextId) {
+        clearSelection();
         ev.preventDefault();
       }
     }
@@ -4027,6 +4712,11 @@
       !ev.ctrlKey &&
       !ev.metaKey
     ) {
+      if (selectedIds.size > 0) {
+        deleteSelection();
+        ev.preventDefault();
+        return;
+      }
       if (selectedTextId) {
         const textId = selectedTextId;
         sendOp({ op: "erase_text", text_id: textId, page_id: "p0" });
@@ -4045,7 +4735,14 @@
       setTool(tool === "erase-stroke" ? "erase-partial" : "erase-stroke");
     }
     if (ev.key === "b" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) setTool("pen");
+    if (ev.key === "v" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) setTool("select");
     if (ev.key === "t" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) setTool("text");
+    if (tool === "select" && ev.key === "r" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      setPickMode("rect");
+    }
+    if (tool === "select" && ev.key === "l" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+      setPickMode("lasso");
+    }
     if (ev.key === "p" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
       Perf.setHud(!Perf.hud);
     }
@@ -4154,7 +4851,7 @@
       .catch((err) => setStatus(String(err.message || err)));
   };
   document.getElementById("btn-export-json").onclick = () => {
-    exportFromApi("/api/export/json", `apesketch-${Date.now()}.ape.json`)
+    exportFromApi("/api/export/json", `apesketch-${Date.now()}.json`)
       .then(() => setStatus("exported JSON"))
       .catch((err) => setStatus(String(err.message || err)));
   };
@@ -4287,6 +4984,17 @@
     setTool("pen");
     toggleStyleDock();
   };
+  if (btnSelect) {
+    btnSelect.onclick = () => setTool("select");
+    btnSelect.ondblclick = (ev) => {
+      ev.preventDefault();
+      setTool("select");
+      toggleStyleDock();
+    };
+  }
+  if (btnPickTap) btnPickTap.onclick = () => setPickMode("tap");
+  if (btnPickRect) btnPickRect.onclick = () => setPickMode("rect");
+  if (btnPickLasso) btnPickLasso.onclick = () => setPickMode("lasso");
   if (btnText) {
     btnText.onclick = () => setTool("text");
     btnText.ondblclick = (ev) => {
@@ -4391,7 +5099,7 @@
     btn.onclick = () => setInkColor(btn.getAttribute("data-color") || "#000000");
   }
   for (const btn of document.querySelectorAll(".bg-swatch")) {
-    btn.onclick = () => setBackground(btn.getAttribute("data-bg") || "#f4f0e6");
+    btn.onclick = () => setBackground(btn.getAttribute("data-bg") || "#fafaf7");
   }
   if (inkWidthInput) {
     inkWidthInput.oninput = () => setInkWidth(inkWidthInput.value);
