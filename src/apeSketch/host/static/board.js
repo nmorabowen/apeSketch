@@ -47,8 +47,22 @@
   let documentState = null;
   let currentStrokeId = null;
   let lastStrokeId = null;
-  let pointBuffer = [];
   let flushTimer = null;
+  /**
+   * Packed open-stroke capture buffer (IQ-1).
+   * @type {null | {
+   *   strokeId: string,
+   *   raw: Float32Array,
+   *   rawCount: number,
+   *   flushedCount: number,
+   *   lastSampleKey: string,
+   * }}
+   */
+  let openStroke = null;
+  const livePackedView = { packed: null, count: 0 };
+  const OPEN_STROKE_INITIAL = 256;
+  const MIN_PRESSURE_DELTA = 0.08;
+  const MIN_PRESSURE_EXTREMA = 0.04;
   const author = `web-${Math.random().toString(36).slice(2, 8)}`;
   let activeSessionId = null;
   let activeSessionTitle = "Untitled";
@@ -152,8 +166,6 @@
   let overlayPending = false;
   let provisionalDraw = null;
   let lastZoomText = "";
-  let livePoints = null; // open-stroke preview without realloc each move
-
   let eraserRadiusWorld = 14;
   const ERASER_STEP_RATIO = 0.45;
   const ERASER_MAX_SEG_STAMPS = 24;
@@ -189,12 +201,18 @@
   const inkCtx = inkLayer.getContext("2d");
   const gridLayer = document.createElement("canvas");
   const gridCtx = gridLayer.getContext("2d");
+  const baseLayer = document.createElement("canvas");
+  const baseCtx = baseLayer.getContext("2d", { alpha: false });
+  const liveLayer = document.createElement("canvas");
+  const liveCtx = liveLayer.getContext("2d");
   let inkDirty = true;
   let inkViewKey = "";
   let inkBake = { x: 0, y: 0, scale: 1 };
   let gridDirty = true;
   let gridViewKey = "";
   let gridBake = { x: 0, y: 0, scale: 1 };
+  let baseFrameValid = false;
+  let livePaintPending = false;
   let docRevision = 0;
   let spatialIndex = null;
   let spatialRev = -1;
@@ -230,12 +248,15 @@
       commit_ms: [],
       emit_ms: [],
       frame_ms: [],
+      live_stroke_ms: [],
     },
     counters: {
       stamps: 0,
       commits: 0,
       emits: 0,
       redraws: 0,
+      coalesced_frames: 0,
+      coalesced_samples: 0,
     },
     lastGesture: null,
     mark(name, ms) {
@@ -287,6 +308,7 @@
           commit_ms: this.stats("commit_ms"),
           emit_ms: this.stats("emit_ms"),
           frame_ms: this.stats("frame_ms"),
+          live_stroke_ms: this.stats("live_stroke_ms"),
         },
         last_gesture: this.lastGesture,
       };
@@ -333,6 +355,7 @@
         `commit_ms     ${fmt(s.timings.commit_ms)}  ${this.trend("commit_ms")}`,
         `emit_ms       ${fmt(s.timings.emit_ms)}`,
         `frame_ms      ${fmt(s.timings.frame_ms)}`,
+        `live_ms       ${fmt(s.timings.live_stroke_ms)}  ${this.trend("live_stroke_ms")}`,
         `history       ${this.history.length} samples (1 Hz)`,
         `sync_queue    ${s.pending_sync_ops}`,
         `stamps/commits ${s.counters.stamps} / ${s.counters.commits}`,
@@ -1310,8 +1333,8 @@
     editingTextId = null;
     editingTextBaseline = "";
     currentStrokeId = null;
-    livePoints = null;
-    pointBuffer = [];
+    openStroke = null;
+    baseFrameValid = false;
     const page =
       documentState &&
       documentState.pages &&
@@ -1459,6 +1482,158 @@
     });
   }
 
+  function scheduleLivePaint() {
+    if (redrawPending) return;
+    if (livePaintPending) return;
+    livePaintPending = true;
+    const scheduledAt = performance.now();
+    requestAnimationFrame(() => {
+      livePaintPending = false;
+      if (redrawPending) return;
+      if (!openStroke || !baseFrameValid) {
+        scheduleRedraw();
+        return;
+      }
+      const t0 = performance.now();
+      paintOpenStrokeLayer();
+      compositeLiveFrame();
+      Perf.mark("live_stroke_ms", performance.now() - t0);
+      Perf.mark("frame_ms", performance.now() - scheduledAt);
+      drawOverlay();
+      if (Perf.hud) Perf.renderHud();
+    });
+  }
+
+
+  function ensureScratchSize(layer) {
+    if (layer.width !== canvas.width || layer.height !== canvas.height) {
+      layer.width = canvas.width;
+      layer.height = canvas.height;
+      return true;
+    }
+    return false;
+  }
+
+
+  function captureBaseFrame() {
+    if (ensureScratchSize(baseLayer)) baseFrameValid = false;
+    baseCtx.setTransform(1, 0, 0, 1, 0, 0);
+    baseCtx.drawImage(canvas, 0, 0);
+    baseFrameValid = true;
+  }
+
+
+  function paintOpenStrokeLayer() {
+    ensureScratchSize(liveLayer);
+    liveCtx.setTransform(1, 0, 0, 1, 0, 0);
+    liveCtx.clearRect(0, 0, liveLayer.width, liveLayer.height);
+    const pts = livePackedPoints();
+    if (!pts) return;
+    const page =
+      documentState && documentState.pages
+        ? documentState.pages[documentState.active_page_id || "p0"]
+        : null;
+    const stroke = page && page.strokes && page.strokes[openStroke.strokeId];
+    const style = stroke
+      ? strokeStyleOf(stroke)
+      : {
+          color: inkColor,
+          width: inkWidth,
+          kind: inkKind,
+          tip: inkTip,
+        };
+    applyWorldTransform(liveCtx);
+    drawStrokePoints(pts, style, { ctx: liveCtx, fast: true, predict: true });
+  }
+
+
+  function compositeLiveFrame() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(baseLayer, 0, 0);
+    ctx.drawImage(liveLayer, 0, 0);
+  }
+
+
+  function inkSampleKey(p) {
+    return `${p.x.toFixed(3)}:${p.y.toFixed(3)}:${p.t.toFixed(1)}`;
+  }
+
+
+  function createOpenStroke(strokeId) {
+    return {
+      strokeId,
+      raw: new Float32Array(OPEN_STROKE_INITIAL * 4),
+      rawCount: 0,
+      flushedCount: 0,
+      lastSampleKey: "",
+    };
+  }
+
+
+  function growOpenStroke(os) {
+    const next = new Float32Array(os.raw.length * 2);
+    next.set(os.raw);
+    os.raw = next;
+  }
+
+
+  function appendOpenStrokeSample(p) {
+    const os = openStroke;
+    if (!os) return;
+    if ((os.rawCount + 1) * 4 > os.raw.length) growOpenStroke(os);
+    const o = os.rawCount * 4;
+    os.raw[o] = p.x;
+    os.raw[o + 1] = p.y;
+    os.raw[o + 2] = p.t;
+    os.raw[o + 3] = p.pressure;
+    os.rawCount += 1;
+  }
+
+
+  function livePackedPoints() {
+    if (!openStroke || openStroke.rawCount < 1) return null;
+    livePackedView.packed = openStroke.raw;
+    livePackedView.count = openStroke.rawCount;
+    return livePackedView;
+  }
+
+
+  function packedRangeToList(raw, start, end) {
+    const out = [];
+    for (let i = start; i < end; i++) {
+      const o = i * 4;
+      out.push([raw[o], raw[o + 1], raw[o + 2], raw[o + 3]]);
+    }
+    return out;
+  }
+
+  /**
+   * Recover high-rate stylus samples between frames.
+   * Falls back to the current event when getCoalescedEvents is missing or empty.
+   */
+
+  function collectCoalescedSamples(ev) {
+    let raw = null;
+    try {
+      if (typeof ev.getCoalescedEvents === "function") raw = ev.getCoalescedEvents();
+    } catch (_) {
+      raw = null;
+    }
+    if (!raw || !raw.length) raw = [ev];
+    const samples = [];
+    let lastKey = openStroke ? openStroke.lastSampleKey : "";
+    for (let i = 0; i < raw.length; i++) {
+      const p = pointerWorld(raw[i]);
+      const key = inkSampleKey(p);
+      if (key === lastKey) continue;
+      lastKey = key;
+      samples.push(p);
+    }
+    if (openStroke) openStroke.lastSampleKey = lastKey;
+    return samples;
+  }
+
+
   function scheduleOverlay() {
     if (overlayPending || redrawPending) return;
     overlayPending = true;
@@ -1479,6 +1654,7 @@
     canvas.height = bh;
     overlay.width = bw;
     overlay.height = bh;
+    baseFrameValid = false;
     invalidateInk();
     invalidateGrid();
     scheduleRedraw();
@@ -3016,10 +3192,10 @@
         tip: inkTip,
       },
     });
-    const first = [p.x, p.y, p.t, p.pressure];
-    pointBuffer.push(first);
-    livePoints = [first];
-    scheduleRedraw({ strokeId: currentStrokeId, points: livePoints });
+    openStroke = createOpenStroke(currentStrokeId);
+    appendOpenStrokeSample(p);
+    openStroke.lastSampleKey = inkSampleKey(p);
+    scheduleRedraw();
     if (flushTimer) clearInterval(flushTimer);
     flushTimer = setInterval(flushPoints, 32);
   }
@@ -3403,6 +3579,275 @@
     return typeof p.pressure === "number" ? p.pressure : 0.5;
   }
 
+  function strokeLen(points) {
+    if (!points) return 0;
+    if (points.packed) return points.count | 0;
+    return points.length;
+  }
+
+  const _ptA = { x: 0, y: 0, t: 0, pressure: 0.5 };
+  const _ptB = { x: 0, y: 0, t: 0, pressure: 0.5 };
+
+  function strokeAt(points, i, out) {
+    if (points.packed) {
+      const o = i * 4;
+      out.x = points.packed[o];
+      out.y = points.packed[o + 1];
+      out.t = points.packed[o + 2];
+      out.pressure = points.packed[o + 3];
+      return out;
+    }
+    const p = points[i];
+    if (Array.isArray(p)) {
+      out.x = p[0];
+      out.y = p[1];
+      out.t = p[2] || 0;
+      out.pressure = p.length > 3 ? p[3] : 0.5;
+    } else {
+      out.x = p.x;
+      out.y = p.y;
+      out.t = p.t || 0;
+      out.pressure = typeof p.pressure === "number" ? p.pressure : 0.5;
+    }
+    return out;
+  }
+
+  function brushTable() {
+    return window.apeSketchBrush || {
+      USE_INK_PREDICT: true,
+      SPEED_REF: 3,
+      SPLIT_PX: 3,
+      STEP_PX: 1.5,
+      MAX_SPLITS: 8,
+      PREDICT_MS: 16,
+      PREDICT_MAX_PX: 8,
+      pen: {
+        round: { pressure: [0.35, 1.3], velocity: -0.15, inertia: 1 },
+        square: { pressure: [0.4, 1.2], velocity: -0.1, inertia: 1 },
+        chisel: { pressure: [0.5, 1.0], velocity: -0.05, inertia: 1 },
+      },
+      fountain: {
+        round: { pressure: [0.45, 1.8], velocity: -0.2, inertia: 0.35 },
+        square: { pressure: [0.45, 1.8], velocity: -0.2, inertia: 0.35 },
+        chisel: { pressure: [0.45, 1.8], velocity: -0.15, inertia: 0.35 },
+      },
+      chalk: {
+        round: { pressure: [0.55, 1.05], velocity: -0.08, inertia: 1 },
+        square: { pressure: [0.55, 1.05], velocity: -0.08, inertia: 1 },
+        chisel: { pressure: [0.55, 1.05], velocity: -0.06, inertia: 1 },
+      },
+    };
+  }
+
+  function brushConfig(kind, tip) {
+    const table = brushTable();
+    const group = table[kind] || table.pen;
+    return (group && (group[tip] || group.round)) || table.pen.round;
+  }
+
+  /** Map stylus pressure + speed to line width. */
+  function widthAtSample(baseWidth, pressure, speed, kind, tip) {
+    const cfg = brushConfig(kind, tip);
+    const p = Math.max(0, Math.min(1, pressure));
+    const lo = cfg.pressure[0];
+    const span = cfg.pressure[1];
+    let w = baseWidth * (lo + p * span);
+    const ref = brushTable().SPEED_REF || 3;
+    const sat = Math.min(Math.max(speed, 0) / ref, 1);
+    w *= 1 + (cfg.velocity || 0) * sat;
+    return w;
+  }
+
+  function widthAtPressure(baseWidth, pressure, kind, tip) {
+    return widthAtSample(baseWidth, pressure, 0, kind, tip);
+  }
+
+  function segmentSpeed(a, b) {
+    const dt = Math.max(b.t - a.t, 0.5);
+    return Math.hypot(b.x - a.x, b.y - a.y) / dt;
+  }
+
+  const synth = { packed: new Float32Array(1024), count: 0, predicted: 0 };
+  const _c0 = { x: 0, y: 0, t: 0, pressure: 0.5 };
+  const _c1 = { x: 0, y: 0, t: 0, pressure: 0.5 };
+  const _c2 = { x: 0, y: 0, t: 0, pressure: 0.5 };
+  const _c3 = { x: 0, y: 0, t: 0, pressure: 0.5 };
+  const _cr = { x: 0, y: 0 };
+
+  function synthPush(x, y, t, pressure) {
+    const need = (synth.count + 1) * 4;
+    if (need > synth.packed.length) {
+      const next = new Float32Array(Math.max(need, synth.packed.length * 2));
+      next.set(synth.packed);
+      synth.packed = next;
+    }
+    const o = synth.count * 4;
+    synth.packed[o] = x;
+    synth.packed[o + 1] = y;
+    synth.packed[o + 2] = t;
+    synth.packed[o + 3] = pressure;
+    synth.count += 1;
+  }
+
+  function distPts(a, b) {
+    return Math.hypot(b.x - a.x, b.y - a.y);
+  }
+
+  const _mA1 = { x: 0, y: 0 };
+  const _mA2 = { x: 0, y: 0 };
+  const _mA3 = { x: 0, y: 0 };
+  const _mB1 = { x: 0, y: 0 };
+  const _mB2 = { x: 0, y: 0 };
+
+  function mix2(ax, ay, bx, by, ta, tb, tq, out) {
+    if (Math.abs(tb - ta) < 1e-9) {
+      out.x = ax;
+      out.y = ay;
+      return out;
+    }
+    const u = (tq - ta) / (tb - ta);
+    out.x = ax + (bx - ax) * u;
+    out.y = ay + (by - ay) * u;
+    return out;
+  }
+
+  /** Centripetal Catmull-Rom between p1 and p2; t in [0,1]. Writes _cr. */
+  function catmullCentripetal(p0, p1, p2, p3, t) {
+    const d01 = Math.pow(distPts(p0, p1), 0.5);
+    const d12 = Math.pow(distPts(p1, p2), 0.5);
+    const d23 = Math.pow(distPts(p2, p3), 0.5);
+    const t0 = 0;
+    const t1 = t0 + Math.max(d01, 1e-6);
+    const t2 = t1 + Math.max(d12, 1e-6);
+    const t3 = t2 + Math.max(d23, 1e-6);
+    const tt = t1 + t * (t2 - t1);
+    mix2(p0.x, p0.y, p1.x, p1.y, t0, t1, tt, _mA1);
+    mix2(p1.x, p1.y, p2.x, p2.y, t1, t2, tt, _mA2);
+    mix2(p2.x, p2.y, p3.x, p3.y, t2, t3, tt, _mA3);
+    mix2(_mA1.x, _mA1.y, _mA2.x, _mA2.y, t0, t2, tt, _mB1);
+    mix2(_mA2.x, _mA2.y, _mA3.x, _mA3.y, t1, t3, tt, _mB2);
+    return mix2(_mB1.x, _mB1.y, _mB2.x, _mB2.y, t1, t2, tt, _cr);
+  }
+
+  function controlAt(points, i, n, extra, out) {
+    if (i < 0) return strokeAt(points, 0, out);
+    if (i >= n) {
+      if (extra && i === n) {
+        out.x = extra.x;
+        out.y = extra.y;
+        out.t = extra.t;
+        out.pressure = extra.pressure;
+        return out;
+      }
+      return strokeAt(points, n - 1, out);
+    }
+    return strokeAt(points, i, out);
+  }
+
+  function predictedTail(points, n) {
+    const table = brushTable();
+    if (!table.USE_INK_PREDICT || n < 2) return null;
+    strokeAt(points, n - 2, _c0);
+    strokeAt(points, n - 1, _c1);
+    const dt = Math.max(_c1.t - _c0.t, 1);
+    let dx = ((_c1.x - _c0.x) / dt) * (table.PREDICT_MS || 16);
+    let dy = ((_c1.y - _c0.y) / dt) * (table.PREDICT_MS || 16);
+    const mag = Math.hypot(dx, dy);
+    const cap = table.PREDICT_MAX_PX || 8;
+    if (mag > cap) {
+      dx = (dx / mag) * cap;
+      dy = (dy / mag) * cap;
+    }
+    if (mag < 0.4) return null;
+    return {
+      x: _c1.x + dx,
+      y: _c1.y + dy,
+      t: _c1.t + (table.PREDICT_MS || 16),
+      pressure: _c1.pressure,
+    };
+  }
+
+  /**
+   * Display-only densification: inertia on pressure, centripetal spline,
+   * optional predicted tip. Does not mutate Document points.
+   */
+  function synthesizeDisplayPoints(points, opts) {
+    const n = strokeLen(points);
+    synth.count = 0;
+    synth.predicted = 0;
+    if (n < 1) return synth;
+    const kind = (opts && opts.kind) || "pen";
+    const tip = (opts && opts.tip) || "round";
+    const cfg = brushConfig(kind, tip);
+    const table = brushTable();
+    const extra = opts && opts.predict ? predictedTail(points, n) : null;
+    const end = n + (extra ? 1 : 0);
+    const alpha = cfg.inertia == null ? 1 : cfg.inertia;
+    const splitPx = table.SPLIT_PX || 3;
+    const stepPx = table.STEP_PX || 1.5;
+    const maxSplits = table.MAX_SPLITS || 8;
+
+    strokeAt(points, 0, _c1);
+    let pDisp = _c1.pressure;
+    synthPush(_c1.x, _c1.y, _c1.t, pDisp);
+
+    for (let i = 0; i < end - 1; i++) {
+      controlAt(points, i - 1, n, extra, _c0);
+      controlAt(points, i, n, extra, _c1);
+      controlAt(points, i + 1, n, extra, _c2);
+      controlAt(points, i + 2, n, extra, _c3);
+      const rawP = _c2.pressure;
+      pDisp = pDisp + (rawP - pDisp) * alpha;
+      const len = distPts(_c1, _c2);
+      const sharp =
+        (_c1.x - _c0.x) * (_c2.x - _c1.x) + (_c1.y - _c0.y) * (_c2.y - _c1.y) < 0;
+      let splits = 1;
+      if (!sharp && len > splitPx) {
+        splits = Math.min(maxSplits, Math.max(1, Math.ceil(len / stepPx)));
+      }
+      for (let s = 1; s <= splits; s++) {
+        const u = s / splits;
+        if (splits > 1) catmullCentripetal(_c0, _c1, _c2, _c3, u);
+        const x = splits > 1 ? _cr.x : _c1.x + (_c2.x - _c1.x) * u;
+        const y = splits > 1 ? _cr.y : _c1.y + (_c2.y - _c1.y) * u;
+        const t = _c1.t + (_c2.t - _c1.t) * u;
+        const pr = pDisp;
+        if (s === splits) {
+          synthPush(_c2.x, _c2.y, _c2.t, pr);
+        } else {
+          synthPush(x, y, t, pr);
+        }
+      }
+    }
+    if (extra) synth.predicted = 1;
+    return synth;
+  }
+
+  function drawPressureSegments(points, style, target, kind, tip, alpha) {
+    const n = strokeLen(points);
+    const pred = (points && points.predicted) || 0;
+    applyTipCaps(target, tip);
+    target.strokeStyle = style.color;
+    const baseA = alpha == null ? 1 : alpha;
+    for (let i = 1; i < n; i++) {
+      const a = strokeAt(points, i - 1, _ptA);
+      const b = strokeAt(points, i, _ptB);
+      target.globalAlpha = pred && i === n - 1 ? baseA * 0.6 : baseA;
+      target.beginPath();
+      target.lineWidth = widthAtSample(
+        style.width,
+        (a.pressure + b.pressure) * 0.5,
+        segmentSpeed(a, b),
+        kind,
+        tip
+      );
+      target.moveTo(a.x, a.y);
+      target.lineTo(b.x, b.y);
+      target.stroke();
+    }
+    target.globalAlpha = 1;
+  }
+
   function applyTipCaps(target, tip) {
     if (tip === "square") {
       target.lineCap = "square";
@@ -3417,66 +3862,72 @@
   }
 
   function drawStrokePoints(points, style, opts) {
-    if (!points.length) return;
+    const kind = style.kind || "pen";
+    const tip = style.tip || "round";
+    const display = synthesizeDisplayPoints(points, {
+      kind,
+      tip,
+      predict: !!(opts && opts.predict),
+    });
+    const n = strokeLen(display);
+    if (!n) return;
     const target = (opts && opts.ctx) || ctx;
     const fast = opts && opts.fast;
-    const kind = fast ? "pen" : style.kind || "pen";
-    const tip = style.tip || "round";
-    if (kind === "fountain") {
-      applyTipCaps(target, tip);
-      target.strokeStyle = style.color;
-      for (let i = 1; i < points.length; i++) {
-        const a = xyOf(points[i - 1]);
-        const b = xyOf(points[i]);
-        const pressure = pressureOf(points[i]);
-        target.beginPath();
-        target.lineWidth = style.width * (0.45 + pressure * 1.8);
-        target.globalAlpha = 0.92;
-        target.moveTo(a.x, a.y);
-        target.lineTo(b.x, b.y);
-        target.stroke();
-      }
-      target.globalAlpha = 1;
+    const renderKind = fast && kind === "chalk" ? "pen" : kind;
+    const pred = display.predicted || 0;
+
+    if (renderKind === "fountain") {
+      drawPressureSegments(display, style, target, "fountain", tip, 0.92);
       return;
     }
-    if (kind === "chalk") {
+    if (renderKind === "chalk") {
       applyTipCaps(target, tip);
       target.strokeStyle = style.color;
-      const passes = [
-        { ox: 0, oy: 0, w: style.width * 1.7, a: 0.38 },
-        { ox: 0.8, oy: -0.6, w: style.width * 1.1, a: 0.28 },
-        { ox: -0.7, oy: 0.5, w: style.width * 0.9, a: 0.22 },
+      const passDefs = [
+        { ox: 0, oy: 0, wMul: 1.7, a: 0.38 },
+        { ox: 0.8, oy: -0.6, wMul: 1.1, a: 0.28 },
+        { ox: -0.7, oy: 0.5, wMul: 0.9, a: 0.22 },
       ];
-      for (const pass of passes) {
-        target.beginPath();
-        target.globalAlpha = pass.a;
-        target.lineWidth = pass.w;
-        for (let i = 0; i < points.length; i++) {
-          const { x, y } = xyOf(points[i]);
-          const jx = x + pass.ox + ((i % 3) - 1) * 0.35;
-          const jy = y + pass.oy + (((i + 1) % 3) - 1) * 0.35;
-          if (i === 0) target.moveTo(jx, jy);
-          else target.lineTo(jx, jy);
+      for (const pass of passDefs) {
+        for (let i = 1; i < n; i++) {
+          const a = strokeAt(display, i - 1, _ptA);
+          const b = strokeAt(display, i, _ptB);
+          const segP = (a.pressure + b.pressure) * 0.5;
+          const baseW = widthAtSample(style.width, segP, segmentSpeed(a, b), "chalk", tip);
+          target.globalAlpha = (pred && i === n - 1 ? 0.6 : 1) * pass.a;
+          target.beginPath();
+          target.lineWidth = baseW * pass.wMul;
+          const j0 = ((i - 1) % 3) - 1;
+          const j1 = (i % 3) - 1;
+          target.moveTo(a.x + pass.ox + j0 * 0.35, a.y + pass.oy + j1 * 0.35);
+          target.lineTo(b.x + pass.ox + j1 * 0.35, b.y + pass.oy + ((i + 1) % 3 - 1) * 0.35);
+          target.stroke();
         }
-        target.stroke();
       }
       target.globalAlpha = 1;
       return;
     }
     if (tip === "chisel") {
       target.strokeStyle = style.color;
-      target.globalAlpha = 1;
       applyTipCaps(target, "chisel");
-      for (let i = 1; i < points.length; i++) {
-        const a = xyOf(points[i - 1]);
-        const b = xyOf(points[i]);
+      for (let i = 1; i < n; i++) {
+        const a = strokeAt(display, i - 1, _ptA);
+        const b = strokeAt(display, i, _ptB);
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const len = Math.hypot(dx, dy) || 1;
-        const nx = (-dy / len) * style.width * 0.55;
-        const ny = (dx / len) * style.width * 0.55;
+        const w = widthAtSample(
+          style.width,
+          (a.pressure + b.pressure) * 0.5,
+          segmentSpeed(a, b),
+          "pen",
+          "chisel"
+        );
+        const nx = (-dy / len) * w * 0.55;
+        const ny = (dx / len) * w * 0.55;
+        target.globalAlpha = pred && i === n - 1 ? 0.6 : 1;
         target.beginPath();
-        target.lineWidth = style.width * 0.35;
+        target.lineWidth = w * 0.35;
         target.moveTo(a.x - nx, a.y - ny);
         target.lineTo(a.x + nx, a.y + ny);
         target.lineTo(b.x + nx, b.y + ny);
@@ -3485,19 +3936,10 @@
         target.fillStyle = style.color;
         target.fill();
       }
+      target.globalAlpha = 1;
       return;
     }
-    target.beginPath();
-    applyTipCaps(target, tip);
-    target.strokeStyle = style.color;
-    target.lineWidth = style.width;
-    target.globalAlpha = 1;
-    for (let i = 0; i < points.length; i++) {
-      const { x, y } = xyOf(points[i]);
-      if (i === 0) target.moveTo(x, y);
-      else target.lineTo(x, y);
-    }
-    target.stroke();
+    drawPressureSegments(display, style, target, "pen", tip, 1);
   }
 
   function drawStroke(stroke, provisionalPoints, opts) {
@@ -3840,6 +4282,34 @@
     return ids;
   }
 
+  function decimateForCommit(points) {
+    if (!points || points.length <= 2) return points;
+    const min2 = MIN_POINT_DIST * MIN_POINT_DIST;
+    const out = [points[0]];
+    let last = points[0];
+    const lastIdx = points.length - 1;
+    for (let i = 1; i < lastIdx; i++) {
+      const p = points[i];
+      const dx = p[0] - last[0];
+      const dy = p[1] - last[1];
+      const curP = p[3] ?? 0.5;
+      const lastP = last[3] ?? 0.5;
+      const prevP = points[i - 1][3] ?? 0.5;
+      const nextP = points[i + 1][3] ?? 0.5;
+      const extremum =
+        ((curP <= prevP && curP <= nextP) || (curP >= prevP && curP >= nextP)) &&
+        (Math.abs(curP - prevP) >= MIN_PRESSURE_EXTREMA ||
+          Math.abs(curP - nextP) >= MIN_PRESSURE_EXTREMA);
+      if (dx * dx + dy * dy >= min2 || Math.abs(curP - lastP) > MIN_PRESSURE_DELTA || extremum) {
+        out.push(p);
+        last = p;
+      }
+    }
+    out.push(points[lastIdx]);
+    return out.length >= 2 ? out : points;
+  }
+
+
   function decimatePoints(points) {
     if (!points || points.length <= 2) return points;
     const min2 = MIN_POINT_DIST * MIN_POINT_DIST;
@@ -3912,15 +4382,12 @@
         for (const run of runs) drawStrokePoints(run, style, { fast: true });
       }
     }
-    if (page && provisional && provisional.strokeId) {
-      const stroke = page.strokes[provisional.strokeId];
-      if (stroke) drawStroke(stroke, provisional.points, { fast: true });
-    } else if (page && currentStrokeId) {
-      const stroke = page.strokes[currentStrokeId];
-      if (stroke) {
-        const pts = livePoints || stroke.points;
-        drawStroke(stroke, pts, { fast: true });
-      }
+    if (openStroke) {
+      captureBaseFrame();
+      paintOpenStrokeLayer();
+      compositeLiveFrame();
+    } else {
+      baseFrameValid = false;
     }
 
     updateZoomLabel();
@@ -4365,16 +4832,20 @@
   }
 
   function flushPoints() {
-    if (!currentStrokeId || pointBuffer.length === 0) return;
-    let points = pointBuffer.splice(0, pointBuffer.length);
-    if (USE_DECIMATE) points = decimatePoints(points);
+    if (!currentStrokeId || !openStroke) return;
+    const start = openStroke.flushedCount;
+    const end = openStroke.rawCount;
+    if (end <= start) return;
+    let points = packedRangeToList(openStroke.raw, start, end);
+    if (USE_DECIMATE) points = decimateForCommit(points);
+    openStroke.flushedCount = end;
     if (!points.length) return;
     sendOp({
       op: "append_points",
       stroke_id: currentStrokeId,
       page_id: "p0",
       points,
-    });
+    }, { paint: false });
   }
 
   function endStrokeIfAny() {
@@ -4382,9 +4853,11 @@
     flushPoints();
     if (flushTimer) clearInterval(flushTimer);
     flushTimer = null;
-    sendOp({ op: "end_stroke", stroke_id: currentStrokeId, page_id: "p0" });
+    const sid = currentStrokeId;
     currentStrokeId = null;
-    livePoints = null;
+    openStroke = null;
+    baseFrameValid = false;
+    sendOp({ op: "end_stroke", stroke_id: sid, page_id: "p0" });
     inkLockedToRule = false;
   }
 
@@ -5154,18 +5627,15 @@
     }
 
     if (!currentStrokeId) return;
-    const sample = [p.x, p.y, p.t, p.pressure];
-    pointBuffer.push(sample);
-    if (!livePoints) {
-      const page = documentState && documentState.pages.p0;
-      const stroke = page && page.strokes[currentStrokeId];
-      livePoints = stroke && stroke.points ? stroke.points.slice() : [];
+    const samples = collectCoalescedSamples(ev);
+    Perf.counters.coalesced_frames += 1;
+    Perf.counters.coalesced_samples += samples.length;
+    if (!samples.length) {
+      ev.preventDefault();
+      return;
     }
-    livePoints.push(sample);
-    scheduleRedraw({
-      strokeId: currentStrokeId,
-      points: livePoints,
-    });
+    for (let i = 0; i < samples.length; i++) appendOpenStrokeSample(samples[i]);
+    scheduleLivePaint();
     ev.preventDefault();
   }
 
@@ -5859,6 +6329,186 @@
 
   window.__apeSketchBench = {
     getTier: () => OPT_TIER,
+
+    collectCoalescedSamples,
+    decimateForCommit,
+    synthesizeDisplayPoints,
+    widthAtSample,
+    runDecimateCheck() {
+      const nearDup = [
+        [0, 0, 0, 0.2],
+        [0.2, 0, 1, 0.2],
+        [0.4, 0, 2, 0.21],
+        [12, 0, 3, 0.21],
+      ];
+      const thinned = decimateForCommit(nearDup);
+      const pressureJump = [
+        [0, 0, 0, 0.2],
+        [0.2, 0, 1, 0.9],
+        [12, 0, 2, 0.9],
+      ];
+      const kept = decimateForCommit(pressureJump);
+      const peak = [
+        [0, 0, 0, 0.3],
+        [0.4, 0, 1, 0.95],
+        [0.8, 0, 2, 0.3],
+        [12, 0, 3, 0.3],
+      ];
+      const peaked = decimateForCommit(peak);
+      return {
+        nearDupKept: thinned.length,
+        pressureJumpKept: kept.some((p) => Math.abs(p[3] - 0.9) < 1e-6 && p[0] === 0.2),
+        peakKept: peaked.some((p) => Math.abs(p[3] - 0.95) < 1e-6),
+      };
+    },
+    /** Build a PointerEvent-like object with coalesced intermediates (for benches). */
+    makeCoalescedEvent(points) {
+      const list = points || [];
+      const last = list[list.length - 1] || { clientX: 0, clientY: 0, timeStamp: 0, pressure: 0.5 };
+      return {
+        clientX: last.clientX,
+        clientY: last.clientY,
+        timeStamp: last.timeStamp || 0,
+        pressure: last.pressure > 0 ? last.pressure : 0.5,
+        getCoalescedEvents: () => list,
+      };
+    },
+    simulateCoalescedMove(samples) {
+      const list = samples || [];
+      for (let i = 0; i < list.length; i++) appendOpenStrokeSample(list[i]);
+      Perf.counters.coalesced_frames += 1;
+      Perf.counters.coalesced_samples += list.length;
+      const t0 = performance.now();
+      if (openStroke && baseFrameValid) {
+        paintOpenStrokeLayer();
+        compositeLiveFrame();
+      } else {
+        redraw();
+      }
+      return performance.now() - t0;
+    },
+    async runDrawBench({
+      sceneStrokes = 80,
+      pointsPer = 24,
+      strokes = 12,
+      pointsPerStroke = 180,
+      coalescedPerMove = 6,
+    } = {}) {
+      sendOp({ op: "clear_page", page_id: "p0" }, { paint: false });
+      const seedOps = [];
+      for (let s = 0; s < sceneStrokes; s++) {
+        const sid = `bench-draw-bg-${s}`;
+        const pts = [];
+        const baseX = (s % 10) * 110;
+        const baseY = Math.floor(s / 10) * 80;
+        for (let i = 0; i < pointsPer; i++) {
+          pts.push([baseX + i * 4, baseY + Math.sin(i / 3) * 18, i * 8, 0.5]);
+        }
+        seedOps.push({
+          op: "add_stroke",
+          stroke_id: sid,
+          page_id: "p0",
+          author: "bench",
+          style: { color: "#111111", width: 2.5, kind: "pen", tip: "round" },
+          points: pts,
+        });
+      }
+      sendOps(seedOps, { paint: true });
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+      const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+      const p95 = (arr) => {
+        if (!arr.length) return 0;
+        const sorted = arr.slice().sort((a, b) => a - b);
+        return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+      };
+
+      Perf.counters.coalesced_frames = 0;
+      Perf.counters.coalesced_samples = 0;
+      const liveSamples = [];
+      const glassSamples = [];
+      let rawTotal = 0;
+      let committedTotal = 0;
+
+      function worldPoint(s, i) {
+        return {
+          x: 80 + i * 1.35 + (s % 7) * 6,
+          y: 140 + Math.sin(i / 6) * 36 + (s % 5) * 10,
+          t: performance.now() + i * 2,
+          pressure: 0.22 + 0.7 * Math.abs(Math.sin(i / 9)),
+          sx: 0,
+          sy: 0,
+        };
+      }
+
+      for (let s = 0; s < strokes; s++) {
+        const tGlass0 = performance.now();
+        beginStrokeAt(worldPoint(s, 0));
+        redraw();
+        glassSamples.push(performance.now() - tGlass0);
+
+        let i = 1;
+        while (i < pointsPerStroke) {
+          const batch = [];
+          const n = Math.min(coalescedPerMove, pointsPerStroke - i);
+          for (let k = 0; k < n; k++, i++) batch.push(worldPoint(s, i));
+          liveSamples.push(this.simulateCoalescedMove(batch));
+        }
+        rawTotal += openStroke ? openStroke.rawCount : 0;
+        const sid = currentStrokeId;
+        endStrokeIfAny();
+        const page = documentState && documentState.pages && documentState.pages.p0;
+        const stroke = page && page.strokes && page.strokes[sid];
+        committedTotal += stroke && stroke.points ? stroke.points.length : 0;
+      }
+
+      const coalesceFrames = Perf.counters.coalesced_frames;
+      const coalesceSamples = Perf.counters.coalesced_samples;
+      const result = {
+        tier: OPT_TIER,
+        decimate: USE_DECIMATE,
+        scene: Perf.scene(),
+        strokes,
+        pointsPerStroke,
+        coalescedPerMove,
+        live_stroke_avg_ms: avg(liveSamples),
+        live_stroke_p95_ms: p95(liveSamples),
+        input_to_glass_avg_ms: avg(glassSamples),
+        input_to_glass_p95_ms: p95(glassSamples),
+        coalesced_per_frame: coalesceFrames ? coalesceSamples / coalesceFrames : 0,
+        points_raw: rawTotal,
+        points_committed: committedTotal,
+        commit_ratio: rawTotal ? committedTotal / rawTotal : 0,
+        decimate_check: this.runDecimateCheck(),
+      };
+      await fetch("/api/perf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          t: new Date().toISOString(),
+          source: "bench-draw",
+          opt_tier: OPT_TIER,
+          fps: 0,
+          scene: result.scene,
+          timings: {
+            live_stroke_ms: {
+              n: liveSamples.length,
+              avg: result.live_stroke_avg_ms,
+              p95: result.live_stroke_p95_ms,
+              last: liveSamples.at(-1) || 0,
+            },
+            redraw_ms: {
+              n: glassSamples.length,
+              avg: result.input_to_glass_avg_ms,
+              p95: result.input_to_glass_p95_ms,
+              last: glassSamples.at(-1) || 0,
+            },
+          },
+          last_gesture: { kind: "draw-bench", strokes, points_raw: rawTotal, points_committed: committedTotal },
+        }),
+      }).catch(() => {});
+      return result;
+    },
     setTier(tier) {
       OPT_TIER = tier === "medium" ? "medium" : "high";
       USE_SPATIAL = OPT_TIER === "medium";

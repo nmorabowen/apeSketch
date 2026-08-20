@@ -116,6 +116,36 @@ def test_ink_kinds_and_background() -> None:
     assert restored.strokes()[0].style.kind == "chalk"
 
 
+def test_svg_pressure_varying_width() -> None:
+    doc = Document()
+    doc.apply(
+        BeginStroke(
+            stroke_id="press",
+            author="t",
+            style=StrokeStyle(color="#112233", width=2.0, kind="pen", tip="round"),
+        )
+    )
+    doc.apply(
+        AppendPoints(
+            stroke_id="press",
+            points=(
+                InkPoint(0, 0, 0.0, 0.2),
+                InkPoint(10, 0, 10.0, 0.9),
+                InkPoint(20, 0, 20.0, 0.3),
+            ),
+        )
+    )
+    doc.apply(EndStroke(stroke_id="press"))
+    svg = Document._page_to_svg(doc.page())
+    assert svg.count('data-stroke-id="press"') >= 2
+    assert 'stroke-width="' in svg
+    widths = []
+    for part in svg.split("stroke-width=\"")[1:]:
+        widths.append(float(part.split('"', 1)[0]))
+    assert len(widths) >= 2
+    assert max(widths) > min(widths)
+
+
 def test_append_unknown_stroke_fails() -> None:
     doc = Document()
     with pytest.raises(DocumentError):

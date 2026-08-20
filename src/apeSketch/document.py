@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -575,22 +576,72 @@ class Document:
             stroke = page.strokes[sid]
             if len(stroke.points) == 0:
                 continue
+            Document._append_stroke_svg(parts, sid, stroke)
+        parts.append("</svg>")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _width_at_pressure(base_width: float, pressure: float, kind: str, tip: str) -> float:
+        p = max(0.0, min(1.0, pressure))
+        if kind == "fountain":
+            return base_width * (0.45 + p * 1.8)
+        if kind == "chalk":
+            return base_width * (0.55 + p * 1.05) * 1.7
+        if tip == "chisel":
+            return base_width * (0.5 + p * 1.0)
+        if tip == "square":
+            return base_width * (0.4 + p * 1.2)
+        return base_width * (0.35 + p * 1.3)
+
+    @staticmethod
+    def _append_stroke_svg(parts: list[str], sid: str, stroke: Any) -> None:
+        tip = stroke.style.tip if stroke.style.tip in {"round", "square", "chisel"} else "round"
+        kind = stroke.style.kind or "pen"
+        opacity = "0.7" if kind == "chalk" else "1"
+        linecap = "butt" if tip == "chisel" else ("square" if tip == "square" else "round")
+        linejoin = "miter" if tip == "square" else "round"
+        pressures = [getattr(pt, "pressure", 0.5) for pt in stroke.points]
+        varying = any(abs(p - pressures[0]) > 0.02 for p in pressures[1:]) if pressures else False
+        if not varying or len(stroke.points) < 2:
             d_parts: list[str] = []
             for i, point in enumerate(stroke.points):
                 cmd = "M" if i == 0 else "L"
                 d_parts.append(f"{cmd}{point.x:.2f},{point.y:.2f}")
-            d = " ".join(d_parts)
-            opacity = "0.7" if stroke.style.kind == "chalk" else "1"
-            width = stroke.style.width * (1.6 if stroke.style.kind == "chalk" else 1.0)
-            tip = stroke.style.tip if stroke.style.tip in {"round", "square", "chisel"} else "round"
-            linecap = "butt" if tip == "chisel" else ("square" if tip == "square" else "round")
-            linejoin = "miter" if tip == "square" else "round"
+            width = Document._width_at_pressure(
+                stroke.style.width, pressures[0] if pressures else 0.5, kind, tip
+            )
+            if kind == "chalk" and not varying:
+                width = stroke.style.width * 1.6
             parts.append(
-                f'<path data-stroke-id="{sid}" data-kind="{stroke.style.kind}" '
-                f'data-tip="{tip}" d="{d}" '
-                f'fill="none" stroke="{stroke.style.color}" stroke-width="{width}" '
+                f'<path data-stroke-id="{sid}" data-kind="{kind}" '
+                f'data-tip="{tip}" d="{" ".join(d_parts)}" '
+                f'fill="none" stroke="{stroke.style.color}" stroke-width="{width:.3f}" '
                 f'stroke-opacity="{opacity}" '
                 f'stroke-linecap="{linecap}" stroke-linejoin="{linejoin}"/>'
             )
-        parts.append("</svg>")
-        return "\n".join(parts)
+            return
+        for i in range(1, len(stroke.points)):
+            a = stroke.points[i - 1]
+            b = stroke.points[i]
+            mid_p = (getattr(a, "pressure", 0.5) + getattr(b, "pressure", 0.5)) * 0.5
+            width = Document._width_at_pressure(stroke.style.width, mid_p, kind, tip)
+            if tip == "chisel":
+                dx = b.x - a.x
+                dy = b.y - a.y
+                length = math.hypot(dx, dy) or 1.0
+                nx = (-dy / length) * width * 0.55
+                ny = (dx / length) * width * 0.55
+                parts.append(
+                    f'<path data-stroke-id="{sid}" data-kind="{kind}" data-tip="{tip}" '
+                    f'd="M{a.x - nx:.2f},{a.y - ny:.2f} L{a.x + nx:.2f},{a.y + ny:.2f} '
+                    f'L{b.x + nx:.2f},{b.y + ny:.2f} L{b.x - nx:.2f},{b.y - ny:.2f} Z" '
+                    f'fill="{stroke.style.color}" stroke="none" fill-opacity="{opacity}"/>'
+                )
+            else:
+                parts.append(
+                    f'<path data-stroke-id="{sid}" data-kind="{kind}" data-tip="{tip}" '
+                    f'd="M{a.x:.2f},{a.y:.2f} L{b.x:.2f},{b.y:.2f}" '
+                    f'fill="none" stroke="{stroke.style.color}" stroke-width="{width:.3f}" '
+                    f'stroke-opacity="{opacity}" '
+                    f'stroke-linecap="{linecap}" stroke-linejoin="{linejoin}"/>'
+                )
