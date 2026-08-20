@@ -7,11 +7,12 @@ import os
 import threading
 import time
 from pathlib import Path
-from urllib.request import ProxyHandler, build_opener
+from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 import pytest
 
 from apeSketch.assets import AssetStore
+from apeSketch.document import Document
 from apeSketch.host.instance import (
     InstancePaths,
     clear_stamp,
@@ -21,7 +22,9 @@ from apeSketch.host.instance import (
 )
 from apeSketch.host.server import SessionHttpServer, _bind_http, _write_live_stamp
 from apeSketch.host.session_store import SessionStore
+from apeSketch.ops import BeginStroke
 from apeSketch.session import SketchSession
+from apeSketch.types import StrokeStyle
 
 _OPENER = build_opener(ProxyHandler({}))
 
@@ -141,6 +144,36 @@ def test_same_root_compares_resolved_paths(tmp_path: Path) -> None:
     root.mkdir()
     assert same_root(root, root / "." / "")
     assert not same_root(tmp_path / "a", tmp_path / "b")
+
+
+def test_api_sessions_open_imports_document(tmp_path: Path) -> None:
+    http, paths = _start(tmp_path / "open", 0)
+    try:
+        port = int(http.server_address[1])
+        doc = Document()
+        doc.apply(
+            BeginStroke(
+                stroke_id="s1",
+                author="t",
+                style=StrokeStyle(color="#111111", width=2),
+            )
+        )
+        body = json.dumps(
+            {"document": doc.to_dict(), "filename": "imported.ape.json"}
+        ).encode("utf-8")
+        req = Request(
+            f"http://127.0.0.1:{port}/api/sessions/open",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(req) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        assert payload["session"]["title"] == "imported"
+        assert payload["snapshot"]["document"]["revision"] == 1
+        assert len(payload["sessions"]) == 1
+    finally:
+        _stop(http, paths.root)
 
 
 def test_live_host_without_stamp_is_absent(tmp_path: Path) -> None:

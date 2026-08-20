@@ -40,6 +40,39 @@ def test_session_store_create_list_load(tmp_path: Path) -> None:
     assert loaded.revision == 2
 
 
+def test_session_store_loads_legacy_document_name(tmp_path):
+    from apeSketch.substrate import LEGACY_SESSION_DOC_NAME, SESSION_DOC_NAME
+
+    store = SessionStore(tmp_path / "sessions")
+    doc = Document()
+    meta = store.create(doc, title="Legacy")
+    legacy_path = store._dir(meta.id) / LEGACY_SESSION_DOC_NAME
+    current_path = store._dir(meta.id) / SESSION_DOC_NAME
+    current_path.unlink()
+    legacy_path.write_text(doc.to_json(), encoding="utf-8")
+
+    loaded_meta, loaded = store.load(meta.id)
+    assert loaded_meta.id == meta.id
+    assert loaded.revision == doc.revision
+
+
+def test_session_store_save_migrates_legacy_document_name(tmp_path):
+    from apeSketch.substrate import LEGACY_SESSION_DOC_NAME, SESSION_DOC_NAME
+
+    store = SessionStore(tmp_path / "sessions")
+    doc = Document()
+    meta = store.create(doc, title="Migrate")
+    folder = store._dir(meta.id)
+    legacy_path = folder / LEGACY_SESSION_DOC_NAME
+    current_path = folder / SESSION_DOC_NAME
+    current_path.unlink()
+    legacy_path.write_text(doc.to_json(), encoding="utf-8")
+
+    store.save(meta.id, doc, title="Migrate")
+    assert current_path.is_file()
+    assert not legacy_path.is_file()
+
+
 def test_session_store_save_rename_delete(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "sessions")
     doc = Document()
