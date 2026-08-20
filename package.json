@@ -7,6 +7,7 @@
     "playwright": "1.62.1"
   },
   "scripts": {
-    "bench:erase": "node scripts/bench_erase.mjs"
+    "bench:erase": "node scripts/bench_erase.mjs",
+    "bench:draw": "node scripts/bench_draw.mjs"
   }
 }

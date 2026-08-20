@@ -65,13 +65,18 @@ uncapped devicePixelRatio. Current mitigations:
 
 - Cap canvas DPR at 1.5
 - Pan by **offset-blitting** cached layers; rebuild only on pan end / zoom
-- Live stroke preview without reallocating the point array each move
+- Live stroke on a separate layer (`baseLayer` + `liveLayer`) with coalesced samples
 - Continuous FPS rAF only while the Perf HUD is open
 
 ```bash
 python -m apeSketch --port 9972 --no-browser
 node scripts/bench_erase.mjs
+node scripts/bench_draw.mjs
+# or: npm run bench:draw
 ```
+
+Draw bench gates (IQ-1 / ADR 0010): `live_stroke` p95 &lt; 4 ms, `input_to_glass` p95 &lt; 25 ms.
+Writes `.apeSketch/perf/_bench_draw.json`.
 
 ## Workflow while developing
 

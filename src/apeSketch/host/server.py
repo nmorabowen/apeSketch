@@ -196,6 +196,13 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
                 no_store=True,
             )
             return
+        if path == "/brush.js":
+            self._send_file(
+                STATIC_DIR / "brush.js",
+                "text/javascript; charset=utf-8",
+                no_store=True,
+            )
+            return
         if path == "/selection.js":
             self._send_file(
                 STATIC_DIR / "selection.js",

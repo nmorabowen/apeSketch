@@ -19,6 +19,7 @@ Status: `Proposed` → `Accepted` → `Amended` / `Superseded`.
 | [0007](0007-instance-scoped-host.md) | Session host is instance-scoped, not machine-global | Accepted |
 | [0008](0008-ape-json-substrate.md) | Consolidated `.ape.json` substrate across ape* documents | Accepted |
 | [0009](0009-drawing-rules-client-capture.md) | Drawing rules are per-client capture aids, not Document state | Accepted |
+| [0010](0010-ink-quality-tier.md) | Ink quality stays on Canvas 2D stack (Tier A) | Accepted |
 
 ## Template
 
