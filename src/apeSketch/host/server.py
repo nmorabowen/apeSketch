@@ -196,6 +196,13 @@ class SessionHttpHandler(BaseHTTPRequestHandler):
                 no_store=True,
             )
             return
+        if path == "/selection.js":
+            self._send_file(
+                STATIC_DIR / "selection.js",
+                "text/javascript; charset=utf-8",
+                no_store=True,
+            )
+            return
         if path == "/pair":
             self._send_file(
                 STATIC_DIR / "pair.html",

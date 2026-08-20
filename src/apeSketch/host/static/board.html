@@ -103,6 +103,7 @@
     #board.panning { cursor: grab; }
     #board.panning.dragging { cursor: grabbing; }
     #board.erasing { cursor: cell; }
+    #board.selecting { cursor: default; }
 
     .brand {
       position: fixed;
@@ -628,6 +629,9 @@
     <button type="button" id="btn-pen" class="active" title="Pen (B) · double-click for style">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l3.2-.7L18.5 7.9a2 2 0 0 0 0-2.8l-.6-.6a2 2 0 0 0-2.8 0L3.7 15.8 4 20z"/><path d="M13.8 6.2l4 4"/></svg>
     </button>
+    <button type="button" id="btn-select" title="Select (V) · double-click for colors">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4l12 16-5-1.5L6 22l2.5-7L6 4z"/></svg>
+    </button>
     <button type="button" id="btn-erase-stroke" title="Erase stroke (E) · double-click for size">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h14"/><path d="M8 16l8-8"/><path d="M9 7l8 8"/><path d="M7 9l2-2 8 8-2 2z"/></svg>
     </button>
@@ -651,6 +655,15 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14"/><path d="M9 7V5h6v2"/><path d="M7 7l1 13h8l1-13"/></svg>
     </button>
   </nav>
+
+  <aside class="dock dock-select" id="dock-select" aria-label="Selection mode" hidden>
+    <div class="label">Pick</div>
+    <div class="style-row">
+      <button type="button" class="style-toggle" id="btn-pick-tap" title="Tap select">Tap</button>
+      <button type="button" class="style-toggle active" id="btn-pick-rect" title="Rectangle (R)">Rect</button>
+      <button type="button" class="style-toggle" id="btn-pick-lasso" title="Loop (L)">Loop</button>
+    </div>
+  </aside>
 
   <aside class="dock dock-style" id="dock-style" aria-label="Ink style" hidden>
     <div class="pen-row">
@@ -796,6 +809,7 @@
   </div>
 
   <pre id="perf-hud"></pre>
+  <script src="/selection.js"></script>
   <script src="/board.js"></script>
 </body>
 </html>

@@ -325,6 +325,45 @@ class SetTextLock:
         object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
 
 
+@dataclass(frozen=True, slots=True)
+class MoveStrokes:
+    stroke_ids: tuple[str, ...]
+    dx: float
+    dy: float
+    page_id: str = "p0"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
+        if len(self.stroke_ids) == 0:
+            raise DocumentError("move_strokes needs at least one stroke_id")
+        ids = tuple(_require_id("stroke_id", sid) for sid in self.stroke_ids)
+        object.__setattr__(self, "stroke_ids", ids)
+
+
+@dataclass(frozen=True, slots=True)
+class SetStrokeStyle:
+    stroke_ids: tuple[str, ...]
+    color: str | None = None
+    width: float | None = None
+    page_id: str = "p0"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "page_id", _require_id("page_id", self.page_id))
+        if len(self.stroke_ids) == 0:
+            raise DocumentError("set_stroke_style needs at least one stroke_id")
+        if self.color is None and self.width is None:
+            raise DocumentError("set_stroke_style needs at least one style field")
+        ids = tuple(_require_id("stroke_id", sid) for sid in self.stroke_ids)
+        object.__setattr__(self, "stroke_ids", ids)
+        if self.color is not None:
+            color = self.color.strip()
+            if color == "":
+                raise DocumentError("color must be non-empty")
+            object.__setattr__(self, "color", color)
+        if self.width is not None and self.width <= 0:
+            raise DocumentError("width must be positive")
+
+
 Op = (
     BeginStroke
     | AppendPoints
@@ -344,6 +383,8 @@ Op = (
     | TransformText
     | EraseText
     | SetTextLock
+    | MoveStrokes
+    | SetStrokeStyle
 )
 
 
@@ -492,6 +533,25 @@ def op_to_dict(op: Op) -> dict[str, Any]:
             "locked": op.locked,
             "page_id": op.page_id,
         }
+    if isinstance(op, MoveStrokes):
+        return {
+            "op": "move_strokes",
+            "stroke_ids": list(op.stroke_ids),
+            "dx": op.dx,
+            "dy": op.dy,
+            "page_id": op.page_id,
+        }
+    if isinstance(op, SetStrokeStyle):
+        payload = {
+            "op": "set_stroke_style",
+            "stroke_ids": list(op.stroke_ids),
+            "page_id": op.page_id,
+        }
+        if op.color is not None:
+            payload["color"] = op.color
+        if op.width is not None:
+            payload["width"] = op.width
+        return payload
     raise DocumentError(f"unknown op type {type(op)!r}")
 
 
@@ -792,5 +852,47 @@ def op_from_dict(data: dict[str, Any]) -> Op:
         if not isinstance(locked, bool):
             raise DocumentError("locked must be a bool")
         return SetTextLock(text_id=text_id, locked=locked, page_id=page_id)
+
+    if kind == "move_strokes":
+        stroke_ids_raw = data.get("stroke_ids")
+        if not isinstance(stroke_ids_raw, list) or not stroke_ids_raw:
+            raise DocumentError("stroke_ids must be a non-empty list")
+        stroke_ids: list[str] = []
+        for item in stroke_ids_raw:
+            if not isinstance(item, str):
+                raise DocumentError("each stroke_id must be a string")
+            stroke_ids.append(item)
+        dx = data.get("dx")
+        dy = data.get("dy")
+        if not isinstance(dx, (int, float)) or not isinstance(dy, (int, float)):
+            raise DocumentError("dx/dy must be numbers")
+        return MoveStrokes(
+            stroke_ids=tuple(stroke_ids),
+            dx=float(dx),
+            dy=float(dy),
+            page_id=page_id,
+        )
+
+    if kind == "set_stroke_style":
+        stroke_ids_raw = data.get("stroke_ids")
+        if not isinstance(stroke_ids_raw, list) or not stroke_ids_raw:
+            raise DocumentError("stroke_ids must be a non-empty list")
+        stroke_ids = []
+        for item in stroke_ids_raw:
+            if not isinstance(item, str):
+                raise DocumentError("each stroke_id must be a string")
+            stroke_ids.append(item)
+        color = data.get("color")
+        width = data.get("width")
+        if color is not None and not isinstance(color, str):
+            raise DocumentError("color must be a string")
+        if width is not None and not isinstance(width, (int, float)):
+            raise DocumentError("width must be a number")
+        return SetStrokeStyle(
+            stroke_ids=tuple(stroke_ids),
+            color=color,
+            width=float(width) if width is not None else None,
+            page_id=page_id,
+        )
 
     raise DocumentError(f"unknown op {kind!r}")
