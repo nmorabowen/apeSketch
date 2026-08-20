@@ -20,10 +20,12 @@ from apeSketch.ops import (
     EraseImage,
     EraseStroke,
     EraseText,
+    MoveStrokes,
     Op,
     ReplaceStrokePoints,
     SetBackground,
     SetImageLock,
+    SetStrokeStyle,
     SetTextContent,
     SetTextLock,
     SetTextStyle,
@@ -34,6 +36,7 @@ from apeSketch.ops import (
 )
 from apeSketch.types import (
     ImageObject,
+    InkPoint,
     Page,
     Stroke,
     StrokeStyle,
@@ -116,6 +119,10 @@ class Document:
             self._erase_text(op)
         elif isinstance(op, SetTextLock):
             self._set_text_lock(op)
+        elif isinstance(op, MoveStrokes):
+            self._move_strokes(op)
+        elif isinstance(op, SetStrokeStyle):
+            self._set_stroke_style(op)
         else:
             raise DocumentError(f"unknown op type {type(op)!r}")
         if record:
@@ -338,6 +345,30 @@ class Document:
         if text is None:
             raise DocumentError(f"unknown text {op.text_id!r}")
         text.locked = op.locked
+
+    def _move_strokes(self, op: MoveStrokes) -> None:
+        page = self._ensure_page(op.page_id)
+        for stroke_id in op.stroke_ids:
+            stroke = page.strokes.get(stroke_id)
+            if stroke is None:
+                raise DocumentError(f"unknown stroke {stroke_id!r}")
+            stroke.points = [
+                InkPoint(p.x + op.dx, p.y + op.dy, p.t, p.pressure) for p in stroke.points
+            ]
+
+    def _set_stroke_style(self, op: SetStrokeStyle) -> None:
+        page = self._ensure_page(op.page_id)
+        for stroke_id in op.stroke_ids:
+            stroke = page.strokes.get(stroke_id)
+            if stroke is None:
+                raise DocumentError(f"unknown stroke {stroke_id!r}")
+            old = stroke.style
+            stroke.style = StrokeStyle(
+                color=op.color if op.color is not None else old.color,
+                width=op.width if op.width is not None else old.width,
+                kind=old.kind,
+                tip=old.tip,
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
