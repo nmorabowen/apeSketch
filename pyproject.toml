@@ -69,6 +69,10 @@ addopts = [
     "-ra",
 ]
 testpaths = ["tests"]
+# Test the tree you ran from. An editable install elsewhere in the
+# environment (a sibling worktree, say) otherwise wins the import and the
+# suite silently checks code you are not editing.
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100
