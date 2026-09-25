@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -148,16 +149,88 @@ def resolve_instance(
     )
 
 
+#: Largest value either platform treats as a pid (a Windows DWORD; POSIX pid_t
+#: is narrower still). A bigger number came from a corrupt stamp, and ctypes
+#: would silently wrap it onto an unrelated pid.
+_PID_MAX = 0xFFFFFFFF
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ERROR_ACCESS_DENIED = 5
+_STILL_ACTIVE = 259
+
+_kernel32_lib: Any = None
+
+
+def _kernel32() -> Any:
+    """kernel32 with ``use_last_error=True``, so a denied probe is not misread
+    through ctypes' own intervening calls. The platform guard lives here, not
+    only in the caller: pyright checks this body on every platform."""
+    if sys.platform != "win32":
+        raise RuntimeError("Windows only")
+    global _kernel32_lib
+    if _kernel32_lib is None:
+        import ctypes
+        from ctypes import wintypes
+
+        lib = ctypes.WinDLL("kernel32", use_last_error=True)
+        lib.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        lib.OpenProcess.restype = wintypes.HANDLE
+        lib.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        lib.GetExitCodeProcess.restype = wintypes.BOOL
+        lib.CloseHandle.argtypes = [wintypes.HANDLE]
+        lib.CloseHandle.restype = wintypes.BOOL
+        _kernel32_lib = lib
+    return _kernel32_lib
+
+
+def _win_pid_alive(pid: int) -> bool:
+    """Ask Windows whether ``pid`` is running, without touching the process.
+
+    ``os.kill(pid, 0)`` is not a probe on Windows: signal 0 is
+    ``CTRL_C_EVENT``, which CPython routes to ``GenerateConsoleCtrlEvent``. Its
+    answer depends on the caller's console, not on the pid: from a terminal
+    it fails with WinError 87 for a live host started elsewhere, so the host
+    read as dead and a second one took over its root (ADR 0007), and on
+    Python 3.11 the failed call falls through to ``TerminateProcess`` and
+    kills that host; for the caller's own children it succeeds, dead or not.
+
+    An exited process whose handle someone still holds (a parent's ``Popen``)
+    can still be opened, so the exit code decides; a process that exited with
+    code 259 (``STILL_ACTIVE``) still reads as alive.
+    """
+    if sys.platform != "win32":
+        raise RuntimeError("Windows only")
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = _kernel32()
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        # Denied means it exists and belongs to someone else.
+        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True
+        return code.value == _STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def pid_alive(pid: int) -> bool:
-    if pid <= 0:
+    """True when ``pid`` looks like a running process. Observes only, never
+    signals. Errs toward alive (a process we may not open counts as alive);
+    ``live_host`` confirms over HTTP, so a wrong "alive" costs one probe."""
+    if pid <= 0 or pid > _PID_MAX:
         return False
+    if sys.platform == "win32":
+        return _win_pid_alive(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
         return True
-    except OSError:
+    except (OSError, OverflowError):
         return False
     return True
 
