@@ -31,3 +31,8 @@ Thumbs.db
 .apeSketch/
 node_modules/
 package-lock.json
+
+# Claude Code session scratch (worktrees, local settings) -- but keep the
+# task guides in .claude/skills/, which are tracked (ADR 0012)
+.claude/*
+!.claude/skills/

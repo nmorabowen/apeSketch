@@ -21,6 +21,7 @@ Status: `Proposed` → `Accepted` → `Amended` / `Superseded`.
 | [0009](0009-drawing-rules-client-capture.md) | Drawing rules are per-client capture aids, not Document state | Accepted |
 | [0010](0010-ink-quality-tier.md) | Ink quality stays on Canvas 2D stack (Tier A) | Accepted |
 | [0011](0011-library-layout-organic-growth.md) | Library layout for organic growth | Proposed |
+| [0012](0012-agent-surface.md) | Agent surface: `AGENTS.md` + one task guide; no quirk lint yet | Proposed |
 
 ## Template
 
